@@ -1,3 +1,4 @@
+// app/api/orders/[id]/confirm/route.ts
 import { NextResponse } from "next/server";
 import dbConnect from "@/lib/db";
 import { OrderModel } from "@/models/Order";
@@ -26,70 +27,79 @@ export async function PATCH(
     const sheets = await getSheetsClient();
     const formattedDate = new Date(order.createdAt).toLocaleDateString("en-IN");
 
-    // 📝 Check for header row
+    // 📝 Ensure a header row exists with columns for 3 items (Name/Qty/Dressings)
+    // Columns: A..N => 14 columns (Order#, Date, Category, [Item/Qty/Dress]*3, Category Total, Status)
     const headerCheck = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: "Sheet1!A1:L1",
+      range: "Sheet1!A1:N1",
     });
 
     if (!headerCheck.data.values || headerCheck.data.values.length === 0) {
-      // 📝 Create a dynamic header with space for multiple items & qty
       const header = [
-        "Order Number",
-        "Date",
-        "Category",
-        "Item 1",
-        "Qty 1",
-        "Item 2",
-        "Qty 2",
-        "Item 3",
-        "Qty 3",
-        "Category Total",
-        "Status",
+        "Order Number",  // A
+        "Date",          // B
+        "Category",      // C
+        "Item 1",        // D
+        "Qty 1",         // E
+        "Dressings 1",   // F
+        "Item 2",        // G
+        "Qty 2",         // H
+        "Dressings 2",   // I
+        "Item 3",        // J
+        "Qty 3",         // K
+        "Dressings 3",   // L
+        "Category Total",// M
+        "Status",        // N
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
-        range: "Sheet1!A1:K1",
+        range: "Sheet1!A1:N1",
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [header] },
       });
     }
 
-    // 🧾 For each category
+    // 🧾 For each category: write a row with up to 3 items (with Qty and Dressings)
     const rows = order.categories.map((cat: string) => {
-      const itemsInCategory = order.items.filter((i: any) => i.category === cat);
+      const itemsInCategory = (order.items as any[]).filter((i) => i.category === cat);
+
+      // Sum price * qty (price already includes dressing add-on coming from UI)
       const categoryTotal = itemsInCategory.reduce(
         (sum: number, i: any) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0),
         0
       );
 
-      // Fill up item columns (up to 3 items here, can be expanded easily)
-      const flatItems: (string | number)[] = [];
+      // Prepare up to 3 items flat: [name, qty, dressingsStr] x 3
+      const flat: (string | number)[] = [];
       for (let i = 0; i < 3; i++) {
-        if (itemsInCategory[i]) {
-          flatItems.push(itemsInCategory[i].name);
-          flatItems.push(itemsInCategory[i].qty);
+        const it = itemsInCategory[i];
+        if (it) {
+          const dressings = Array.isArray(it.dressings) ? it.dressings.join("+") : "";
+          flat.push(it.name ?? "");
+          flat.push(it.qty ?? "");
+          flat.push(dressings);
         } else {
-          flatItems.push(""); // empty item name
-          flatItems.push(""); // empty qty
+          flat.push(""); // name
+          flat.push(""); // qty
+          flat.push(""); // dressings
         }
       }
 
       return [
-        order.orderNumber,
-        formattedDate,
-        cat,
-        ...flatItems,
-        categoryTotal,
-        order.status,
+        order.orderNumber,    // A
+        formattedDate,        // B
+        cat,                  // C
+        ...flat,              // D-L (3 * [name, qty, dressings])
+        categoryTotal,        // M
+        order.status,         // N
       ];
     });
 
     // 📤 Append rows
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: "Sheet1!A2:K",
+      range: "Sheet1!A2:N",
       valueInputOption: "USER_ENTERED",
       requestBody: { values: rows },
     });

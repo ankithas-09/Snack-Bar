@@ -39,6 +39,13 @@ const CATEGORIES: Category[] = [
 const DRESSINGS = ["Yogurt", "Chipotle", "Mint"] as const;
 type Dressing = (typeof DRESSINGS)[number];
 
+// ✅ Add dressing prices
+const DRESSING_PRICES: Record<Dressing, number> = {
+  Yogurt: 10,
+  Chipotle: 15,
+  Mint: 0,
+};
+
 // ==============================
 // Menu Items
 // ==============================
@@ -146,11 +153,24 @@ export default function OrderPage() {
 
   const totalItems = useMemo(() => Object.values(cart).reduce((a, b) => a + b, 0), [cart]);
 
+  // ✅ Updated totalAmount to include dressing prices
   const totalAmount = useMemo(() => {
     return Object.entries(cart).reduce((sum, [key, qty]) => {
       const id = key.split(DRESS_KEY_PREFIX)[0];
       const item = ITEMS.find((i) => i.id === id);
-      return sum + (item ? item.price * qty : 0);
+      if (!item) return sum;
+
+      let base = item.price;
+      const dressPart = key.includes(DRESS_KEY_PREFIX)
+        ? key.split(DRESS_KEY_PREFIX)[1]
+        : "";
+      if (dressPart) {
+        const chosen = dressPart.split("+") as Dressing[];
+        const dressCost = chosen.reduce((s, d) => s + (DRESSING_PRICES[d] || 0), 0);
+        base += dressCost;
+      }
+
+      return sum + base * qty;
     }, 0);
   }, [cart]);
 
@@ -179,23 +199,26 @@ export default function OrderPage() {
   };
 
   const checkout = async () => {
-    // Build order payload with category included
     const itemsList = Object.entries(cart).map(([key, qty]) => {
       const id = key.split(DRESS_KEY_PREFIX)[0];
       const item = ITEMS.find((i) => i.id === id);
+      const dressPart = key.includes(DRESS_KEY_PREFIX)
+        ? key.split(DRESS_KEY_PREFIX)[1]
+        : "";
+      const chosenDressings = dressPart ? dressPart.split("+") as Dressing[] : [];
+      const dressingCost = chosenDressings.reduce((s, d) => s + (DRESSING_PRICES[d] || 0), 0);
       return {
         name: item?.name || "",
         qty,
-        price: item?.price || 0,
-        category: item?.category || "", // ✅ store category for sheet grouping
+        price: (item?.price || 0) + dressingCost, // ✅ price includes dressing cost
+        category: item?.category || "",
+        dressings: chosenDressings,
       };
     });
 
     const categories = [
       ...new Set(
-        itemsList
-          .map((i) => i.category)
-          .filter(Boolean)
+        itemsList.map((i) => i.category).filter(Boolean)
       ),
     ];
 
@@ -209,21 +232,27 @@ export default function OrderPage() {
       }),
     });
 
-    if (res.ok) {
-      router.push("/orders");
-    }
+    if (res.ok) router.push("/orders");
   };
 
   const renderItemCard = (item: MenuItem) => {
-    const allowDress = item.allowDressings === true && item.category === "Salad Bowls";
+    const allowDress = item.allowDressings && item.category === "Salad Bowls";
     const selectedDressings = allowDress ? saladDressings[item.id] || [] : undefined;
     const isOut = outOfStock[item.id];
+
+    // Calculate dressing add-on for display
+    const extra =
+      allowDress && selectedDressings && selectedDressings.length > 0
+        ? selectedDressings.reduce((s, d) => s + (DRESSING_PRICES[d] || 0), 0)
+        : 0;
 
     return (
       <article className={`menu-card ${isOut ? "out-of-stock" : ""}`} key={item.id}>
         <header className="menu-card-header">
           <h3 className="menu-title">{item.name}</h3>
-          <div className="menu-price">{formatINR(item.price)}</div>
+          <div className="menu-price">
+            {formatINR(item.price + extra)}
+          </div>
         </header>
 
         {/* Toggle Switch */}
@@ -251,7 +280,7 @@ export default function OrderPage() {
                     disabled={isOut}
                     onChange={(e) => setDressingSelected(item.id, d, e.target.checked)}
                   />
-                  {d}
+                  {d} ({formatINR(DRESSING_PRICES[d])})
                 </label>
               );
             })}
@@ -290,7 +319,6 @@ export default function OrderPage() {
 
   return (
     <section className="hero">
-      {/* 🔙 Back Button */}
       <div className="back-container">
         <button className="btn secondary back-btn" onClick={() => router.push("/")}>
           ← Back
@@ -298,7 +326,6 @@ export default function OrderPage() {
       </div>
 
       <div className="glass">
-        {/* Tabs */}
         <nav className="tabs">
           {CATEGORIES.map((cat) => (
             <button
@@ -311,7 +338,6 @@ export default function OrderPage() {
           ))}
         </nav>
 
-        {/* Items Grid */}
         {visibleItems.length === 0 ? (
           <div className="empty-note">
             No items in <strong>{active}</strong> yet.
@@ -321,7 +347,6 @@ export default function OrderPage() {
         )}
       </div>
 
-      {/* Cart Bar */}
       <div className="cartbar">
         <div className="cartbar-left">
           <span className="cart-count">
