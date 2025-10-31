@@ -1,7 +1,10 @@
-// app/orders/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import Script from "next/script";
+import { printHTML } from "@/lib/print";
+import { buildReceiptHTML } from "@/lib/receiptHtml";
+import { printWithQZ } from "@/lib/qzPrinter";
 
 type Item = { name: string; qty: number; price: number; category: string };
 type Order = {
@@ -13,7 +16,6 @@ type Order = {
   status: "PENDING" | "CONFIRMED";
   createdAt: string;
 };
-
 type RefundDoc = {
   _id: string;
   orderNumber: number;
@@ -21,7 +23,6 @@ type RefundDoc = {
   refundAmount: number;
   createdAt: string;
 };
-
 type RefundSummary = {
   items: Item[];
   total: number;
@@ -36,14 +37,35 @@ function toINR(n: number) {
   }).format(n);
 }
 
+// Convert image to DataURL for inline logo embedding
+async function fetchAsDataURL(url: string): Promise<string> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
+  const [refundsByOrder, setRefundsByOrder] = useState<Record<number, RefundSummary>>({});
   const [cancelMode, setCancelMode] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Record<string, string[]>>({});
-  const [refundsByOrder, setRefundsByOrder] = useState<Record<number, RefundSummary>>({});
   const [clearing, setClearing] = useState(false);
+  const [printingId, setPrintingId] = useState<string | null>(null);
+  const [logoDataUrl, setLogoDataUrl] = useState<string | undefined>(undefined);
 
-  // Fetch orders
+  // Load logo once
+  useEffect(() => {
+    fetchAsDataURL("/snack-bar-logo.jpg")
+      .then(setLogoDataUrl)
+      .catch(() => setLogoDataUrl(undefined));
+  }, []);
+
+  // Fetch all orders
   useEffect(() => {
     (async () => {
       const res = await fetch("/api/orders");
@@ -52,12 +74,11 @@ export default function OrdersPage() {
     })();
   }, []);
 
-  // Fetch refunds and group by orderNumber
+  // Fetch refunds
   useEffect(() => {
     (async () => {
       const res = await fetch("/api/refunds");
       const rows: RefundDoc[] = await res.json();
-
       const map: Record<number, RefundSummary> = {};
       for (const r of rows) {
         const key = r.orderNumber;
@@ -72,12 +93,6 @@ export default function OrdersPage() {
       setRefundsByOrder(map);
     })();
   }, []);
-
-  const confirmOrder = async (id: string) => {
-    const res = await fetch(`/api/orders/${id}/confirm`, { method: "PATCH" });
-    const data = await res.json();
-    setOrders((prev) => prev.map((o) => (o._id === id ? { ...o, status: data.status } : o)));
-  };
 
   const toggleItemSelection = (orderId: string, itemName: string) => {
     setSelectedItems((prev) => {
@@ -115,8 +130,6 @@ export default function OrdersPage() {
 
     if (res.ok) {
       const data: { success: boolean; refunds: RefundDoc[] } = await res.json();
-
-      // Optimistically update grouped refunds UI for this order
       setRefundsByOrder((prev) => {
         const cur = prev[order.orderNumber] || { items: [], total: 0 };
         const newItems = [...cur.items, ...data.refunds.flatMap((r) => r.refundedItems || [])];
@@ -130,14 +143,12 @@ export default function OrdersPage() {
           [order.orderNumber]: { items: newItems, total: newTotal, lastRefundAt: latest },
         };
       });
-
       alert("✅ Refund recorded successfully");
       setCancelMode(null);
       setSelectedItems((prev) => ({ ...prev, [order._id]: [] }));
     }
   };
 
-  // NEW: Clear all orders (DB + UI)
   const clearAllOrders = async () => {
     if (orders.length === 0) return;
     const ok = confirm("This will permanently delete ALL orders. Continue?");
@@ -150,7 +161,6 @@ export default function OrdersPage() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err?.error || "Failed to clear orders");
       }
-      // Optimistic UI clear
       setOrders([]);
       setRefundsByOrder({});
       alert("🧹 All orders cleared");
@@ -161,8 +171,54 @@ export default function OrdersPage() {
     }
   };
 
+  const printAndConfirm = async (o: Order) => {
+    try {
+      setPrintingId(o._id);
+
+      // Try silent print via QZ Tray
+      let printed = false;
+      try {
+        await printWithQZ({
+          orderNumber: o.orderNumber,
+          createdAt: o.createdAt,
+          items: o.items,
+          totalAmount: o.totalAmount,
+          logoDataUrl,
+          logoUrl: "/snack-bar-logo.jpg",
+        });
+        printed = true;
+      } catch {
+        // Browser print fallback
+        const html = buildReceiptHTML({
+          orderNumber: o.orderNumber,
+          createdAt: o.createdAt,
+          items: o.items,
+          totalAmount: o.totalAmount,
+          logoDataUrl,
+          logoUrl: "/snack-bar-logo.jpg",
+        });
+        printHTML(html);
+        await new Promise((r) => setTimeout(r, 600));
+      }
+
+      // Confirm in DB
+      const res = await fetch(`/api/orders/${o._id}/confirm`, { method: "PATCH" });
+      if (!res.ok) throw new Error("Confirm failed");
+      const data = await res.json();
+      setOrders((prev) => prev.map((x) => (x._id === o._id ? { ...x, status: data.status } : x)));
+
+      if (printed) console.log(`✅ Order ${o.orderNumber} printed & confirmed`);
+    } catch (e: any) {
+      alert(`Printing/confirm failed: ${e?.message || e}`);
+    } finally {
+      setPrintingId(null);
+    }
+  };
+
   return (
     <section className="hero">
+      <Script src="/qz-tray.js" strategy="afterInteractive" />
+
       <div className="back-container">
         <button className="btn secondary back-btn" onClick={() => history.back()}>
           ← Back
@@ -170,13 +226,15 @@ export default function OrdersPage() {
       </div>
 
       <div className="glass">
-        <div className="orders-header">
-          <h2 className="orders-heading">📋 Orders</h2>
+        <div className="orders-header" style={{ display: "flex", gap: 16, alignItems: "center" }}>
+          <h2 className="orders-heading" style={{ flex: 1 }}>
+            📋 Orders
+          </h2>
+
           <button
             className="btn danger"
             onClick={clearAllOrders}
             disabled={orders.length === 0 || clearing}
-            title={orders.length === 0 ? "No orders to clear" : "Delete all orders"}
           >
             {clearing ? "Clearing…" : "Clear All"}
           </button>
@@ -188,7 +246,7 @@ export default function OrdersPage() {
           <table className="orders-table">
             <thead>
               <tr>
-                <th>Order #</th>
+                <th>Order</th>
                 <th>Date</th>
                 <th>Categories</th>
                 <th>Items</th>
@@ -202,113 +260,110 @@ export default function OrdersPage() {
             <tbody>
               {orders.map((order, idx) => {
                 const refund = refundsByOrder[order.orderNumber];
-
-                const cells = [
-                  <td key="num">{order.orderNumber}</td>,
-                  <td key="date">
-                    {new Date(order.createdAt).toLocaleDateString("en-IN")}
-                  </td>,
-                  <td key="cats">{order.categories.join(", ")}</td>,
-                  <td key="items">
-                    {order.items.map((i) => (
-                      <div key={i.name}>
-                        {cancelMode === order._id && (
-                          <input
-                            type="checkbox"
-                            checked={!!selectedItems[order._id]?.includes(i.name)}
-                            onChange={() => toggleItemSelection(order._id, i.name)}
-                          />
-                        )}
-                        <span style={{ marginLeft: cancelMode === order._id ? 6 : 0 }}>
-                          {i.name} x{i.qty}
-                        </span>
-                      </div>
-                    ))}
-                    {cancelMode === order._id && (
-                      <div style={{ marginTop: 6 }}>
-                        <input
-                          type="checkbox"
-                          checked={!!(selectedItems[order._id]?.length === order.items.length)}
-                          onChange={() =>
-                            toggleSelectAll(
-                              order._id,
-                              order.items.map((i) => i.name)
-                            )
-                          }
-                        />
-                        <span style={{ marginLeft: 6 }}>Select All</span>
-                      </div>
-                    )}
-                  </td>,
-                  <td key="total">{toINR(order.totalAmount)}</td>,
-                  <td key="refunds">
-                    {!refund ? (
-                      <span className="muted">—</span>
-                    ) : (
-                      <div className="refunds-cell">
-                        <ul className="refunds-list">
-                          {refund.items.map((ri, i) => (
-                            <li key={`${ri.name}-${i}`}>
-                              {ri.name} x{ri.qty} — {toINR(ri.price * ri.qty)}
-                            </li>
-                          ))}
-                        </ul>
-                        <div className="refunds-total">
-                          <strong>Total Refunded:</strong> {toINR(refund.total)}
-                        </div>
-                        {refund.lastRefundAt && (
-                          <div className="refunds-last">
-                            Last refund: {refund.lastRefundAt.toLocaleString("en-IN")}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </td>,
-                  <td key="status">
-                    <span
-                      className={`status-badge ${
-                        order.status === "CONFIRMED" ? "confirmed" : "pending"
-                      }`}
-                    >
-                      {order.status}
-                    </span>
-                  </td>,
-                  <td key="actions">
-                    {order.status === "PENDING" && (
-                      <button className="btn confirm-btn" onClick={() => confirmOrder(order._id)}>
-                        Confirm ✅
-                      </button>
-                    )}
-                    {order.status === "CONFIRMED" && cancelMode !== order._id && (
-                      <button
-                        className="btn secondary"
-                        onClick={() => {
-                          setCancelMode(order._id);
-                          setSelectedItems((prev) => ({
-                            ...prev,
-                            [order._id]: prev[order._id] || [],
-                          }));
-                        }}
-                      >
-                        Cancel ❌
-                      </button>
-                    )}
-                    {cancelMode === order._id && (
-                      <>
-                        <button className="btn refund-btn" onClick={() => refundItems(order)}>
-                          Refund 💰
-                        </button>
-                        <button className="btn secondary" onClick={() => setCancelMode(null)}>
-                          Close
-                        </button>
-                      </>
-                    )}
-                  </td>,
-                ];
-
                 return (
                   <tr key={order._id} className={idx % 2 === 0 ? "even" : "odd"}>
-                    {cells}
+                    <td>{order.orderNumber}</td>
+                    <td>{new Date(order.createdAt).toLocaleDateString("en-IN")}</td>
+                    <td>{order.categories.join(", ")}</td>
+                    <td>
+                      {order.items.map((i) => (
+                        <div key={i.name}>
+                          {cancelMode === order._id && (
+                            <input
+                              type="checkbox"
+                              checked={!!selectedItems[order._id]?.includes(i.name)}
+                              onChange={() => toggleItemSelection(order._id, i.name)}
+                            />
+                          )}
+                          <span className={cancelMode === order._id ? "ml-6" : ""}>
+                            {i.name} x{i.qty}
+                          </span>
+                        </div>
+                      ))}
+                      {cancelMode === order._id && (
+                        <div className="mt-6">
+                          <input
+                            type="checkbox"
+                            checked={!!(selectedItems[order._id]?.length === order.items.length)}
+                            onChange={() =>
+                              toggleSelectAll(
+                                order._id,
+                                order.items.map((i) => i.name)
+                              )
+                            }
+                          />
+                          <span className="ml-6">Select All</span>
+                        </div>
+                      )}
+                    </td>
+                    <td>{toINR(order.totalAmount)}</td>
+                    <td>
+                      {!refund ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        <div className="refunds-cell">
+                          <ul className="refunds-list">
+                            {refund.items.map((ri, i) => (
+                              <li key={`${ri.name}-${i}`}>
+                                {ri.name} x{ri.qty} — {toINR(ri.price * ri.qty)}
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="refunds-total">
+                            <strong>Total Refunded:</strong> {toINR(refund.total)}
+                          </div>
+                          {refund.lastRefundAt && (
+                            <div className="refunds-last">
+                              Last refund: {refund.lastRefundAt.toLocaleString("en-IN")}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <span
+                        className={`status-badge ${
+                          order.status === "CONFIRMED" ? "confirmed" : "pending"
+                        }`}
+                      >
+                        {order.status}
+                      </span>
+                    </td>
+                    <td>
+                      {order.status === "PENDING" && (
+                        <button
+                          className="btn confirm-btn"
+                          onClick={() => printAndConfirm(order)}
+                          disabled={printingId === order._id}
+                        >
+                          {printingId === order._id ? "Printing…" : "Confirm ✅"}
+                        </button>
+                      )}
+                      {order.status === "CONFIRMED" && cancelMode !== order._id && (
+                        <button
+                          className="btn secondary"
+                          onClick={() => {
+                            setCancelMode(order._id);
+                            setSelectedItems((prev) => ({
+                              ...prev,
+                              [order._id]: prev[order._id] || [],
+                            }));
+                          }}
+                        >
+                          Cancel ❌
+                        </button>
+                      )}
+                      {cancelMode === order._id && (
+                        <>
+                          <button className="btn refund-btn" onClick={() => refundItems(order)}>
+                            Refund 💰
+                          </button>
+                          <button className="btn secondary" onClick={() => setCancelMode(null)}>
+                            Close
+                          </button>
+                        </>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -316,44 +371,6 @@ export default function OrdersPage() {
           </table>
         )}
       </div>
-
-      <style jsx>{`
-        .orders-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 12px;
-        }
-        .refunds-cell {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-        .refunds-list {
-          margin: 0;
-          padding-left: 1rem;
-        }
-        .refunds-total {
-          margin-top: 4px;
-          padding-top: 4px;
-          border-top: 1px dashed #ccc;
-        }
-        .refunds-last {
-          font-size: 12px;
-          opacity: 0.7;
-        }
-        .muted {
-          opacity: 0.6;
-        }
-        .btn.danger {
-          background: #e53935;
-          color: white;
-          border: none;
-        }
-        .btn.danger[disabled] {
-          opacity: 0.6;
-        }
-      `}</style>
     </section>
   );
 }

@@ -40,21 +40,6 @@ export default function HomePage() {
       </div>
 
       <div className="rule" style={{ marginTop: 24 }} />
-
-      <div id="menu" className="glass" style={{ marginTop: 24 }}>
-        <h2 style={{ marginTop: 0, marginBottom: 8 }}>Today’s Picks</h2>
-        <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
-          <li>Masala Fries — crisp & spicy</li>
-          <li>Grilled Sandwich — cheesy goodness</li>
-          <li>Cold Coffee — smooth and bold</li>
-        </ul>
-
-        <div className="actions" style={{ marginTop: 16 }}>
-          <a href="/order" className="btn" aria-label="Order Picks">
-            Add to Order
-          </a>
-        </div>
-      </div>
     </section>
   );
 }
