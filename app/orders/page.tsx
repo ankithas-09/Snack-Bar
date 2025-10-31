@@ -1,10 +1,7 @@
+// app/orders/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
-import Script from "next/script";
-import { printHTML } from "@/lib/print";
-import { buildReceiptHTML } from "@/lib/receiptHtml";
-import { printWithQZ } from "@/lib/qzPrinter";
 
 type Item = { name: string; qty: number; price: number; category: string };
 type Order = {
@@ -37,33 +34,13 @@ function toINR(n: number) {
   }).format(n);
 }
 
-// Convert image to DataURL for inline logo embedding
-async function fetchAsDataURL(url: string): Promise<string> {
-  const res = await fetch(url);
-  const blob = await res.blob();
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [refundsByOrder, setRefundsByOrder] = useState<Record<number, RefundSummary>>({});
   const [cancelMode, setCancelMode] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Record<string, string[]>>({});
   const [clearing, setClearing] = useState(false);
-  const [printingId, setPrintingId] = useState<string | null>(null);
-  const [logoDataUrl, setLogoDataUrl] = useState<string | undefined>(undefined);
-
-  // Load logo once
-  useEffect(() => {
-    fetchAsDataURL("/snack-bar-logo.jpg")
-      .then(setLogoDataUrl)
-      .catch(() => setLogoDataUrl(undefined));
-  }, []);
+  const [printingId, setPrintingId] = useState<string | null>(null); // reused for "Confirming…" state
 
   // Fetch all orders
   useEffect(() => {
@@ -171,45 +148,17 @@ export default function OrdersPage() {
     }
   };
 
+  // ✅ Confirm only (no printing)
   const printAndConfirm = async (o: Order) => {
     try {
-      setPrintingId(o._id);
-
-      // Try silent print via QZ Tray
-      let printed = false;
-      try {
-        await printWithQZ({
-          orderNumber: o.orderNumber,
-          createdAt: o.createdAt,
-          items: o.items,
-          totalAmount: o.totalAmount,
-          logoDataUrl,
-          logoUrl: "/snack-bar-logo.jpg",
-        });
-        printed = true;
-      } catch {
-        // Browser print fallback
-        const html = buildReceiptHTML({
-          orderNumber: o.orderNumber,
-          createdAt: o.createdAt,
-          items: o.items,
-          totalAmount: o.totalAmount,
-          logoDataUrl,
-          logoUrl: "/snack-bar-logo.jpg",
-        });
-        printHTML(html);
-        await new Promise((r) => setTimeout(r, 600));
-      }
-
-      // Confirm in DB
+      setPrintingId(o._id); // reuse state to disable the button and show "Confirming…"
       const res = await fetch(`/api/orders/${o._id}/confirm`, { method: "PATCH" });
       if (!res.ok) throw new Error("Confirm failed");
       const data = await res.json();
       setOrders((prev) => prev.map((x) => (x._id === o._id ? { ...x, status: data.status } : x)));
-
-      if (printed) console.log(`✅ Order ${o.orderNumber} printed & confirmed`);
+      console.log(`✅ Order ${o.orderNumber} confirmed (no print)`);
     } catch (e: any) {
-      alert(`Printing/confirm failed: ${e?.message || e}`);
+      alert(`Confirm failed: ${e?.message || e}`);
     } finally {
       setPrintingId(null);
     }
@@ -217,8 +166,6 @@ export default function OrdersPage() {
 
   return (
     <section className="hero">
-      <Script src="/qz-tray.js" strategy="afterInteractive" />
-
       <div className="back-container">
         <button className="btn secondary back-btn" onClick={() => history.back()}>
           ← Back
@@ -336,7 +283,7 @@ export default function OrdersPage() {
                           onClick={() => printAndConfirm(order)}
                           disabled={printingId === order._id}
                         >
-                          {printingId === order._id ? "Printing…" : "Confirm ✅"}
+                          {printingId === order._id ? "Confirming…" : "Confirm ✅"}
                         </button>
                       )}
                       {order.status === "CONFIRMED" && cancelMode !== order._id && (
