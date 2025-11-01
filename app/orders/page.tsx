@@ -3,16 +3,23 @@
 
 import { useEffect, useState } from "react";
 
+// ==============================
+// Types
+// ==============================
 type Item = { name: string; qty: number; price: number; category: string };
+type OrderStatus = "PENDING" | "CONFIRMED" | "DELIVERED";
+
 type Order = {
   _id: string;
   orderNumber: number;
   categories: string[];
   items: Item[];
   totalAmount: number;
-  status: "PENDING" | "CONFIRMED";
+  status: OrderStatus;
   createdAt: string;
+  deliveredAt?: string;
 };
+
 type RefundDoc = {
   _id: string;
   orderNumber: number;
@@ -20,12 +27,16 @@ type RefundDoc = {
   refundAmount: number;
   createdAt: string;
 };
+
 type RefundSummary = {
   items: Item[];
   total: number;
   lastRefundAt?: Date;
 };
 
+// ==============================
+// Utils
+// ==============================
 function toINR(n: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -34,81 +45,171 @@ function toINR(n: number) {
   }).format(n);
 }
 
+// Build map: orderNumber -> { items[], total, lastRefundAt }
+function buildRefundsMap(rows: RefundDoc[]): Record<number, RefundSummary> {
+  const map: Record<number, RefundSummary> = {};
+  for (const r of rows) {
+    const key = r.orderNumber;
+    if (!map[key]) map[key] = { items: [], total: 0, lastRefundAt: undefined };
+    map[key].items.push(...(r.refundedItems || []));
+    map[key].total += r.refundAmount || 0;
+    const ts = r.createdAt ? new Date(r.createdAt) : undefined;
+    if (ts && (!map[key].lastRefundAt || ts > map[key].lastRefundAt!)) {
+      map[key].lastRefundAt = ts;
+    }
+  }
+  return map;
+}
+
+// For a given orderNumber and itemName, how many units have already been refunded?
+function refundedQtyFor(
+  refundsByOrder: Record<number, RefundSummary>,
+  orderNumber: number,
+  itemName: string
+): number {
+  const sum =
+    refundsByOrder[orderNumber]?.items?.reduce((acc, it) => {
+      return it.name === itemName ? acc + (it.qty || 0) : acc;
+    }, 0) ?? 0;
+  return sum;
+}
+
+// ==============================
+// Component
+// ==============================
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [refundsByOrder, setRefundsByOrder] = useState<Record<number, RefundSummary>>({});
-  const [cancelMode, setCancelMode] = useState<string | null>(null);
-  const [selectedItems, setSelectedItems] = useState<Record<string, string[]>>({});
+  const [cancelMode, setCancelMode] = useState<string | null>(null); // orderId when refund UI is open
   const [clearing, setClearing] = useState(false);
-  const [printingId, setPrintingId] = useState<string | null>(null); // reused for "Confirming…" state
+  const [printingId, setPrintingId] = useState<string | null>(null);
+  const [deliveringId, setDeliveringId] = useState<string | null>(null);
 
-  // Fetch all orders
-  useEffect(() => {
-    (async () => {
-      const res = await fetch("/api/orders");
-      const data: Order[] = await res.json();
-      setOrders(data);
-    })();
-  }, []);
+  // per-order per-item quantities chosen for refund
+  // shape: { [orderId]: { [itemName]: number } }
+  const [selectedQtys, setSelectedQtys] = useState<Record<string, Record<string, number>>>({});
 
-  // Fetch refunds
+  // ==============================
+  // Fetch orders (auto-refresh every 5s)
+  // ==============================
   useEffect(() => {
-    (async () => {
-      const res = await fetch("/api/refunds");
-      const rows: RefundDoc[] = await res.json();
-      const map: Record<number, RefundSummary> = {};
-      for (const r of rows) {
-        const key = r.orderNumber;
-        if (!map[key]) map[key] = { items: [], total: 0, lastRefundAt: undefined };
-        map[key].items.push(...(r.refundedItems || []));
-        map[key].total += r.refundAmount || 0;
-        const ts = r.createdAt ? new Date(r.createdAt) : undefined;
-        if (ts && (!map[key].lastRefundAt || ts > map[key].lastRefundAt)) {
-          map[key].lastRefundAt = ts;
-        }
+    let active = true;
+
+    async function fetchOrders() {
+      try {
+        const res = await fetch("/api/orders");
+        const data: Order[] = await res.json();
+        if (active) setOrders(data);
+      } catch (e) {
+        console.error("Failed to fetch orders:", e);
       }
-      setRefundsByOrder(map);
-    })();
+    }
+
+    fetchOrders();
+    const interval = setInterval(fetchOrders, 5000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, []);
 
-  const toggleItemSelection = (orderId: string, itemName: string) => {
-    setSelectedItems((prev) => {
-      const current = prev[orderId] || [];
-      return current.includes(itemName)
-        ? { ...prev, [orderId]: current.filter((i) => i !== itemName) }
-        : { ...prev, [orderId]: [...current, itemName] };
+  // ==============================
+  // Fetch refunds (auto-refresh every 5s)
+  // ==============================
+  useEffect(() => {
+    let active = true;
+
+    async function fetchRefunds() {
+      try {
+        const res = await fetch("/api/refunds");
+        const rows: RefundDoc[] = await res.json();
+        if (active) setRefundsByOrder(buildRefundsMap(rows));
+      } catch (e) {
+        console.error("Failed to fetch refunds:", e);
+      }
+    }
+
+    fetchRefunds();
+    const interval = setInterval(fetchRefunds, 5000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // ==============================
+  // Refund helpers (quantity UI)
+  // ==============================
+  const setQty = (orderId: string, itemName: string, qty: number) => {
+    setSelectedQtys((prev) => ({
+      ...prev,
+      [orderId]: { ...(prev[orderId] || {}), [itemName]: qty },
+    }));
+  };
+
+  const setAllToMax = (order: Order) => {
+    setSelectedQtys((prev) => {
+      const next = { ...(prev[order._id] || {}) };
+      for (const it of order.items) {
+        const already = refundedQtyFor(refundsByOrder, order.orderNumber, it.name);
+        const remaining = Math.max(0, it.qty - already);
+        next[it.name] = remaining;
+      }
+      return { ...prev, [order._id]: next };
     });
   };
 
-  const toggleSelectAll = (orderId: string, allItemNames: string[]) => {
-    setSelectedItems((prev) => {
-      const current = prev[orderId] || [];
-      const allSelected = current.length === allItemNames.length;
-      return { ...prev, [orderId]: allSelected ? [] : allItemNames };
-    });
+  const clearAll = (orderId: string) => {
+    setSelectedQtys((prev) => ({ ...prev, [orderId]: {} }));
   };
 
+  // ==============================
+  // Refund flow (POST /api/refunds)
+  // ==============================
   const refundItems = async (order: Order) => {
-    const selected = selectedItems[order._id] || [];
-    if (selected.length === 0) return;
+    const perItem = selectedQtys[order._id] || {};
+    const refundable: Item[] = [];
 
-    const refundedItems = order.items.filter((i) => selected.includes(i.name));
-    const refundAmount = refundedItems.reduce((sum, i) => sum + i.price * i.qty, 0);
+    for (const it of order.items) {
+      const requested = Math.max(0, Math.floor(perItem[it.name] || 0));
+      if (requested === 0) continue;
+
+      const already = refundedQtyFor(refundsByOrder, order.orderNumber, it.name);
+      const remaining = Math.max(0, it.qty - already);
+      const finalQty = Math.min(requested, remaining);
+      if (finalQty > 0) {
+        refundable.push({
+          name: it.name,
+          qty: finalQty,
+          price: it.price,
+          category: it.category,
+        });
+      }
+    }
+
+    if (refundable.length === 0) {
+      alert("Please select at least 1 quantity to refund.");
+      return;
+    }
+
+    const refundAmount = refundable.reduce((sum, i) => sum + i.price * i.qty, 0);
 
     const res = await fetch("/api/refunds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         orderNumber: order.orderNumber,
-        refundedItems,
+        refundedItems: refundable,
         refundAmount,
       }),
     });
 
     if (res.ok) {
       const data: { success: boolean; refunds: RefundDoc[] } = await res.json();
+
+      // Immediately reflect in UI without waiting for next poll
       setRefundsByOrder((prev) => {
-        const cur = prev[order.orderNumber] || { items: [], total: 0 };
+        const cur = prev[order.orderNumber] || { items: [], total: 0, lastRefundAt: undefined };
         const newItems = [...cur.items, ...data.refunds.flatMap((r) => r.refundedItems || [])];
         const newTotal =
           (cur.total || 0) + data.refunds.reduce((s, r) => s + (r.refundAmount || 0), 0);
@@ -120,24 +221,27 @@ export default function OrdersPage() {
           [order.orderNumber]: { items: newItems, total: newTotal, lastRefundAt: latest },
         };
       });
+
       alert("✅ Refund recorded successfully");
       setCancelMode(null);
-      setSelectedItems((prev) => ({ ...prev, [order._id]: [] }));
+      clearAll(order._id);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(`❌ Refund failed: ${err?.error || "Unknown error"}`);
     }
   };
 
+  // ==============================
+  // Danger: clear all orders
+  // ==============================
   const clearAllOrders = async () => {
     if (orders.length === 0) return;
     const ok = confirm("This will permanently delete ALL orders. Continue?");
     if (!ok) return;
-
     try {
       setClearing(true);
       const res = await fetch("/api/orders", { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error || "Failed to clear orders");
-      }
+      if (!res.ok) throw new Error("Failed to clear orders");
       setOrders([]);
       setRefundsByOrder({});
       alert("🧹 All orders cleared");
@@ -148,15 +252,17 @@ export default function OrdersPage() {
     }
   };
 
-  // ✅ Confirm only (no printing)
+  // ==============================
+  // Confirm (no printing)
+  // ==============================
   const printAndConfirm = async (o: Order) => {
     try {
-      setPrintingId(o._id); // reuse state to disable the button and show "Confirming…"
+      setPrintingId(o._id);
       const res = await fetch(`/api/orders/${o._id}/confirm`, { method: "PATCH" });
       if (!res.ok) throw new Error("Confirm failed");
       const data = await res.json();
       setOrders((prev) => prev.map((x) => (x._id === o._id ? { ...x, status: data.status } : x)));
-      console.log(`✅ Order ${o.orderNumber} confirmed (no print)`);
+      console.log(`✅ Order ${o.orderNumber} confirmed`);
     } catch (e: any) {
       alert(`Confirm failed: ${e?.message || e}`);
     } finally {
@@ -164,6 +270,34 @@ export default function OrdersPage() {
     }
   };
 
+  // ==============================
+  // Mark delivered
+  // ==============================
+  const markDelivered = async (o: Order) => {
+    try {
+      setDeliveringId(o._id);
+      const res = await fetch(`/api/orders/${o._id}/deliver`, { method: "PATCH" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Deliver failed");
+      }
+      const data: { status: OrderStatus; deliveredAt?: string } = await res.json();
+      setOrders((prev) =>
+        prev.map((x) =>
+          x._id === o._id ? { ...x, status: data.status, deliveredAt: data.deliveredAt } : x
+        )
+      );
+      console.log(`✅ Order ${o.orderNumber} marked delivered`);
+    } catch (e: any) {
+      alert(`Deliver failed: ${e?.message || e}`);
+    } finally {
+      setDeliveringId(null);
+    }
+  };
+
+  // ==============================
+  // Render
+  // ==============================
   return (
     <section className="hero">
       <div className="back-container">
@@ -173,11 +307,8 @@ export default function OrdersPage() {
       </div>
 
       <div className="glass">
-        <div className="orders-header" style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          <h2 className="orders-heading" style={{ flex: 1 }}>
-            📋 Orders
-          </h2>
-
+        <div className="orders-header">
+          <h2 className="orders-heading">📋 Orders</h2>
           <button
             className="btn danger"
             onClick={clearAllOrders}
@@ -212,38 +343,87 @@ export default function OrdersPage() {
                     <td>{order.orderNumber}</td>
                     <td>{new Date(order.createdAt).toLocaleDateString("en-IN")}</td>
                     <td>{order.categories.join(", ")}</td>
+
+                    {/* ITEMS + Partial Refund Inputs */}
                     <td>
-                      {order.items.map((i) => (
-                        <div key={i.name}>
-                          {cancelMode === order._id && (
-                            <input
-                              type="checkbox"
-                              checked={!!selectedItems[order._id]?.includes(i.name)}
-                              onChange={() => toggleItemSelection(order._id, i.name)}
-                            />
-                          )}
-                          <span className={cancelMode === order._id ? "ml-6" : ""}>
-                            {i.name} x{i.qty}
-                          </span>
-                        </div>
-                      ))}
+                      {order.items.map((i) => {
+                        const already = refundedQtyFor(refundsByOrder, order.orderNumber, i.name);
+                        const remaining = Math.max(0, i.qty - already);
+                        const value = selectedQtys[order._id]?.[i.name] ?? 0;
+                        const fullyRefunded = remaining === 0;
+
+                        return (
+                          <div
+                            key={i.name}
+                            className="item-row"
+                            style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}
+                          >
+                            <span style={{ minWidth: 160 }}>
+                              {i.name} x{i.qty}
+                            </span>
+
+                            {cancelMode === order._id && (
+                              <>
+                                {fullyRefunded ? (
+                                  <span className="muted">Fully refunded</span>
+                                ) : (i.qty === 1 || remaining === 1) ? (
+                                  // ✅ Single-quantity or only 1 remaining: show checkbox, not number input
+                                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={value > 0}
+                                      onChange={(e) =>
+                                        setQty(order._id, i.name, e.target.checked ? 1 : 0)
+                                      }
+                                    />
+                                    <span className="muted">Refund 1</span>
+                                  </label>
+                                ) : (
+                                  // ✅ Multi-quantity: show number input (0..remaining)
+                                  <>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={remaining}
+                                      value={value}
+                                      onChange={(e) =>
+                                        setQty(
+                                          order._id,
+                                          i.name,
+                                          Math.min(
+                                            remaining,
+                                            Math.max(0, Number(e.target.value) || 0)
+                                          )
+                                        )
+                                      }
+                                      className="qty-input"
+                                      style={{ width: 72 }}
+                                    />
+                                    <span className="muted">Remaining: {remaining}</span>
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+
                       {cancelMode === order._id && (
-                        <div className="mt-6">
-                          <input
-                            type="checkbox"
-                            checked={!!(selectedItems[order._id]?.length === order.items.length)}
-                            onChange={() =>
-                              toggleSelectAll(
-                                order._id,
-                                order.items.map((i) => i.name)
-                              )
-                            }
-                          />
-                          <span className="ml-6">Select All</span>
+                        <div className="mt-6" style={{ display: "flex", gap: 8 }}>
+                          <button className="btn secondary" onClick={() => setAllToMax(order)}>
+                            Refund all remaining
+                          </button>
+                          <button className="btn secondary" onClick={() => clearAll(order._id)}>
+                            Clear selection
+                          </button>
                         </div>
                       )}
                     </td>
+
+                    {/* TOTAL */}
                     <td>{toINR(order.totalAmount)}</td>
+
+                    {/* REFUNDS CELL */}
                     <td>
                       {!refund ? (
                         <span className="muted">—</span>
@@ -267,15 +447,28 @@ export default function OrdersPage() {
                         </div>
                       )}
                     </td>
+
+                    {/* STATUS */}
                     <td>
                       <span
                         className={`status-badge ${
-                          order.status === "CONFIRMED" ? "confirmed" : "pending"
+                          order.status === "DELIVERED"
+                            ? "delivered"
+                            : order.status === "CONFIRMED"
+                            ? "confirmed"
+                            : "pending"
                         }`}
                       >
-                        {order.status}
+                        {order.status === "DELIVERED" ? "DONE" : order.status}
                       </span>
+                      {order.deliveredAt && (
+                        <div className="muted">
+                          {new Date(order.deliveredAt).toLocaleString("en-IN")}
+                        </div>
+                      )}
                     </td>
+
+                    {/* ACTIONS */}
                     <td>
                       {order.status === "PENDING" && (
                         <button
@@ -286,20 +479,51 @@ export default function OrdersPage() {
                           {printingId === order._id ? "Confirming…" : "Confirm ✅"}
                         </button>
                       )}
+
                       {order.status === "CONFIRMED" && cancelMode !== order._id && (
-                        <button
-                          className="btn secondary"
-                          onClick={() => {
-                            setCancelMode(order._id);
-                            setSelectedItems((prev) => ({
-                              ...prev,
-                              [order._id]: prev[order._id] || [],
-                            }));
-                          }}
-                        >
-                          Cancel ❌
-                        </button>
+                        <>
+                          <button
+                            className="btn success"
+                            onClick={() => markDelivered(order)}
+                            disabled={deliveringId === order._id}
+                          >
+                            {deliveringId === order._id ? "Marking…" : "Mark Delivered 🚚"}
+                          </button>
+                          <button
+                            className="btn secondary"
+                            onClick={() => {
+                              setCancelMode(order._id);
+                              setSelectedQtys((prev) => ({
+                                ...prev,
+                                [order._id]: prev[order._id] || {},
+                              }));
+                            }}
+                          >
+                            Cancel ❌
+                          </button>
+                        </>
                       )}
+
+                      {order.status === "DELIVERED" && cancelMode !== order._id && (
+                        <>
+                          <span className="muted" style={{ display: "block", marginBottom: 6 }}>
+                            Handed to customer ✔️
+                          </span>
+                          <button
+                            className="btn secondary"
+                            onClick={() => {
+                              setCancelMode(order._id);
+                              setSelectedQtys((prev) => ({
+                                ...prev,
+                                [order._id]: prev[order._id] || {},
+                              }));
+                            }}
+                          >
+                            Cancel ❌
+                          </button>
+                        </>
+                      )}
+
                       {cancelMode === order._id && (
                         <>
                           <button className="btn refund-btn" onClick={() => refundItems(order)}>

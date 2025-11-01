@@ -4,6 +4,8 @@ import mongoose, { Schema, model, models, Document } from "mongoose";
 // ==============================
 // Types
 // ==============================
+export type OrderStatus = "PENDING" | "CONFIRMED" | "DELIVERED";
+
 export interface OrderItem {
   name: string;
   qty: number;
@@ -17,7 +19,8 @@ export interface OrderDoc extends Document {
   categories: string[];
   items: OrderItem[];
   totalAmount: number;     // grand total for the order
-  status: "PENDING" | "CONFIRMED";
+  status: OrderStatus;
+  deliveredAt?: Date;      // set when chef marks as delivered/done
   createdAt: Date;
   updatedAt: Date;
 }
@@ -41,9 +44,10 @@ const OrderSchema = new Schema<OrderDoc>(
     totalAmount: { type: Number, required: true },
     status: {
       type: String,
-      enum: ["PENDING", "CONFIRMED"],
+      enum: ["PENDING", "CONFIRMED", "DELIVERED"], // ⬅️ added DELIVERED
       default: "PENDING",
     },
+    deliveredAt: { type: Date }, // ⬅️ timestamp when handed to customer
     // Do NOT define createdAt manually; let timestamps handle both fields
   },
   { timestamps: true } // adds createdAt & updatedAt
@@ -52,4 +56,10 @@ const OrderSchema = new Schema<OrderDoc>(
 // ==============================
 // Model
 // ==============================
-export const OrderModel = models.Order || model<OrderDoc>("Order", OrderSchema);
+export const OrderModel =
+  models.Order || model<OrderDoc>("Order", OrderSchema);
+
+// Optional: helpful type guard for runtime use (if you need it elsewhere)
+export function isDelivered(order: Pick<OrderDoc, "status">): boolean {
+  return order.status === "DELIVERED";
+}

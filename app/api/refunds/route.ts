@@ -8,28 +8,36 @@ const SHEET_ID = process.env.SNACKBAR_SHEET_ID as string;
 
 // ===================================================
 // ✅ CREATE Refund (POST)
+// - Writes one refund doc per refunded item
+// - Appends one row per item to Google Sheet "Sheet2"
+// - Returns array: created refund docs
 // ===================================================
 export async function POST(req: Request) {
   try {
     await dbConnect();
     const data = await req.json();
 
-    if (!data.orderNumber || !data.refundedItems || data.refundedItems.length === 0) {
+    const { orderNumber, refundedItems, refundAmount } = data || {};
+    if (
+      typeof orderNumber !== "number" ||
+      !Array.isArray(refundedItems) ||
+      refundedItems.length === 0
+    ) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Invalid refund payload" },
         { status: 400 }
       );
     }
 
     const sheets = await getSheetsClient();
 
-    // 🧾 Ensure Sheet2 has headers
+    // Ensure Sheet2 has headers (A1:F1)
     const readRes = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: "Sheet2!A1:A1",
+      range: "Sheet2!A1:F1",
     });
 
-    if (!readRes.data.values) {
+    if (!readRes.data.values || readRes.data.values.length === 0) {
       await sheets.spreadsheets.values.append({
         spreadsheetId: SHEET_ID,
         range: "Sheet2!A1:F1",
@@ -49,26 +57,24 @@ export async function POST(req: Request) {
       });
     }
 
-    // 🪄 1. Create separate refund docs & sheet rows for each refunded item
+    // Create separate refund docs for each item, and log to Sheets
     const createdRefunds = [];
     const sheetValues: any[] = [];
 
-    for (const item of data.refundedItems) {
+    for (const item of refundedItems) {
       const singleRefundAmount = item.price * item.qty;
 
-      // ✅ Create one document per item
       const refundDoc = await RefundModel.create({
-        orderNumber: data.orderNumber,
+        orderNumber,
         refundedItems: [item],
         refundAmount: singleRefundAmount,
       });
 
       createdRefunds.push(refundDoc);
 
-      // ✅ Prepare one row per item for Google Sheets
       const formattedDate = new Date(refundDoc.createdAt).toLocaleString("en-IN");
       sheetValues.push([
-        data.orderNumber,
+        orderNumber,
         formattedDate,
         item.name,
         item.qty,
@@ -77,22 +83,19 @@ export async function POST(req: Request) {
       ]);
     }
 
-    // 📝 2. Append multiple rows at once to Sheet2
     if (sheetValues.length > 0) {
       await sheets.spreadsheets.values.append({
         spreadsheetId: SHEET_ID,
         range: "Sheet2!A:F",
         valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: sheetValues,
-        },
+        requestBody: { values: sheetValues },
       });
     }
 
     return NextResponse.json({ success: true, refunds: createdRefunds });
-  } catch (err) {
+  } catch (err: any) {
     console.error("❌ Error creating refund:", err);
-    return NextResponse.json({ error: "Failed to create refund" }, { status: 500 });
+    return NextResponse.json({ error: err?.message || "Failed to create refund" }, { status: 500 });
   }
 }
 
@@ -104,8 +107,8 @@ export async function GET() {
     await dbConnect();
     const refunds = await RefundModel.find().sort({ createdAt: -1 });
     return NextResponse.json(refunds);
-  } catch (err) {
+  } catch (err: any) {
     console.error("❌ Error fetching refunds:", err);
-    return NextResponse.json({ error: "Failed to fetch refunds" }, { status: 500 });
+    return NextResponse.json({ error: err?.message || "Failed to fetch refunds" }, { status: 500 });
   }
 }

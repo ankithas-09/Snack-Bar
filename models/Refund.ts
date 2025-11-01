@@ -1,5 +1,5 @@
 // models/Refund.ts
-import mongoose, { Schema, model, models, Document } from "mongoose";
+import { Schema, model, models, Document } from "mongoose";
 
 export interface RefundItem {
   name: string;
@@ -13,6 +13,7 @@ export interface RefundDoc extends Document {
   refundedItems: RefundItem[];
   refundAmount: number;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 const RefundItemSchema = new Schema<RefundItem>({
@@ -27,9 +28,9 @@ const RefundSchema = new Schema<RefundDoc>(
     orderNumber: { type: Number, required: true },
     refundedItems: { type: [RefundItemSchema], required: true },
     refundAmount: { type: Number, required: true },
-    createdAt: { type: Date, default: Date.now },
   },
-  { timestamps: true }
+  { timestamps: true } // creates createdAt & updatedAt automatically
 );
 
-export const RefundModel = models.Refund || model<RefundDoc>("Refund", RefundSchema);
+export const RefundModel =
+  models.Refund || model<RefundDoc>("Refund", RefundSchema);

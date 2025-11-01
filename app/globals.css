@@ -1416,3 +1416,57 @@ input[type="checkbox"] {
   .btn.add-btn { padding: 6px 10px; font-size: 0.85rem; }
   .tabs { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; }
 }
+
+/* ============================
+   ORDER STATUS & BUTTON STYLES
+   ============================ */
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+
+/* Pending */
+.status-badge.pending {
+  background-color: #fef3c7; /* light yellow */
+  color: #92400e;
+}
+
+/* Confirmed */
+.status-badge.confirmed {
+  background-color: #bfdbfe; /* light blue */
+  color: #1e3a8a;
+}
+
+/* Delivered */
+.status-badge.delivered {
+  background-color: #c6f6d5; /* light green */
+  color: #22543d;
+}
+
+/* Buttons */
+.btn.success {
+  background-color: #16a34a;
+  color: #fff;
+  border: none;
+}
+
+.btn.success:hover {
+  background-color: #15803d;
+}
+
+.btn.success:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Muted text for timestamps */
+.muted {
+  color: #666;
+  font-size: 12px;
+}
+
