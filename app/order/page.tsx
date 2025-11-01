@@ -51,40 +51,40 @@ const DRESSING_PRICES: Record<Dressing, number> = {
 // ==============================
 const ITEMS: MenuItem[] = [
   // 🧆 Bites
-  { id: "bites-potato-stir-fry", category: "Bites", name: "Potato Stir Fry", price: 70 },
-  { id: "bites-potato-cheese-balls", category: "Bites", name: "Potato Cheese Balls", price: 80 },
-  { id: "bites-cheesy-soya-corn-kabab", category: "Bites", name: "Cheesy Soya Corn Kabab", price: 80 },
-  { id: "bites-rice-paper-dahi-chat", category: "Bites", name: "Rice Paper Dahi Chat", price: 90 },
-  { id: "bites-paneer-chickpea-nuggets", category: "Bites", name: "Paneer Chickpea Nuggets", price: 90 },
+  { id: "bites-potato-stir-fry", category: "Bites", name: "Potato Stir Fry", price: 80 },
+  { id: "bites-potato-cheese-balls", category: "Bites", name: "Potato Cheese Balls", price: 100 },
+  { id: "bites-cheesy-soya-corn-kabab", category: "Bites", name: "Cheesy Soya Corn Kabab", price: 100 },
+  { id: "bites-rice-paper-dahi-chat", category: "Bites", name: "Rice Paper Dahi Chat", price: 100 },
+  { id: "bites-paneer-chickpea-nuggets", category: "Bites", name: "Paneer Chickpea Nuggets", price: 110 },
 
   // 🥪 Sandwiches
-  { id: "sandwich-classic-veg", category: "Sandwiches", name: "Classic Veg Grill Sandwich", price: 80 },
-  { id: "sandwich-corn", category: "Sandwiches", name: "Corn Chilly Cheese Sandwich", price: 80 },
-  { id: "sandwich-caramelized-onion-mushroom", category: "Sandwiches", name: "Caramelized Onion & Mushroom Sandwich", price: 100 },
-  { id: "sandwich-mumbai-street-style", category: "Sandwiches", name: "Mumbai Street Style Sandwich", price: 100 },
-  { id: "sandwich-avocado", category: "Sandwiches", name: "Avocado Sandwich", price: 120 },
+  { id: "sandwich-classic-veg", category: "Sandwiches", name: "Classic Veg Grill Sandwich", price: 90 },
+  { id: "sandwich-corn", category: "Sandwiches", name: "Corn Chilly Cheese Sandwich", price: 90 },
+  { id: "sandwich-caramelized-onion-mushroom", category: "Sandwiches", name: "Caramelized Onion & Mushroom Sandwich", price: 120 },
+  { id: "sandwich-mumbai-street-style", category: "Sandwiches", name: "Mumbai Street Style Sandwich", price: 120 },
+  { id: "sandwich-avocado", category: "Sandwiches", name: "Avocado Sandwich", price: 140 },
 
   // 🥗 Salad Bowls
-  { id: "salad-roasted-cauliflower-chickpea", category: "Salad Bowls", name: "Roasted Cauliflower & Chickpea Salad", price: 90, allowDressings: true },
-  { id: "salad-roasted-crispy-potato", category: "Salad Bowls", name: "Roasted Crispy Potato Salad", price: 90, allowDressings: true },
+  { id: "salad-roasted-cauliflower-chickpea", category: "Salad Bowls", name: "Roasted Cauliflower & Chickpea Salad", price: 100, allowDressings: true },
+  { id: "salad-roasted-crispy-potato", category: "Salad Bowls", name: "Roasted Crispy Potato Salad", price: 100, allowDressings: true },
   { id: "salad-classic-sprouts-peanuts", category: "Salad Bowls", name: "Classic Sprouts Salad with Peanuts", price: 120, allowDressings: true },
   { id: "salad-protein-packed-soya", category: "Salad Bowls", name: "Protein-Packed Soya Salad", price: 120, allowDressings: true },
 
   // 🍓 Fruit Bowls
-  { id: "fruit-cut-fruit-salad", category: "Fruit Bowls", name: "Cut Fruit Salad", price: 60 }, 
-  { id: "fruit-creamy-fruit-salad", category: "Fruit Bowls", name: "Creamy Fruit Salad", price: 70 },
+  { id: "fruit-cut-fruit-salad", category: "Fruit Bowls", name: "Cut Fruit Salad", price: 80 }, 
+  { id: "fruit-creamy-fruit-salad", category: "Fruit Bowls", name: "Creamy Fruit Salad", price: 100 },
 
   // 🥤 Smoothies
   { id: "smoothie-chia-seeds", category: "Smoothies", name: "Chia Seeds Smoothie", price: 80 },
-  { id: "smoothie-chocolate", category: "Smoothies", name: "Chocolate Smoothie", price: 80 },
-  { id: "smoothie-banoffee", category: "Smoothies", name: "Banoffee Smoothie", price: 80 },
-  { id: "smoothie-avocado", category: "Smoothies", name: "Avocado Smoothie (Seasonal)", price: 100 },
+  { id: "smoothie-chocolate", category: "Smoothies", name: "Chocolate Smoothie", price: 90 },
+  { id: "smoothie-banoffee", category: "Smoothies", name: "Banoffee Smoothie", price: 110 },
+  { id: "smoothie-avocado", category: "Smoothies", name: "Avocado Smoothie (Seasonal)", price: 130 },
 
   // 🧃 Juices
   { id: "juice-mint-lime-soda", category: "Juices", name: "Mint & Lime Soda", price: 40 },
-  { id: "juice-watermelon-crush", category: "Juices", name: "Watermelon Crush Juice", price: 50 },
+  { id: "juice-watermelon-crush", category: "Juices", name: "Watermelon Crush Juice", price: 60 },
   { id: "juice-abc", category: "Juices", name: "ABC", price: 60 },
-  { id: "juice-muskmelon", category: "Juices", name: "Muskmelon Juice", price: 60 },
+  { id: "juice-muskmelon", category: "Juices", name: "Muskmelon Juice", price: 80 },
   { id: "juice-cucumber-spinach-greenapple", category: "Juices", name: "Cucumber Spinach Green Apple", price: 80 },
 
   // ☕ Hot Beverages
