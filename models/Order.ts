@@ -9,18 +9,18 @@ export type OrderStatus = "PENDING" | "CONFIRMED" | "DELIVERED";
 export interface OrderItem {
   name: string;
   qty: number;
-  price: number;           // price PER UNIT (already includes dressing add-on if any)
-  category: string;        // used for grouping in Sheets
-  dressings?: string[];    // optional: e.g., ["Yogurt","Chipotle"]
+  price: number;        // unit price (already includes add-ons if any)
+  category: string;     // used for grouping in Sheets / UI
+  dressings?: string[]; // e.g., ["Yogurt","Chipotle"]
 }
 
 export interface OrderDoc extends Document {
   orderNumber: number;
   categories: string[];
   items: OrderItem[];
-  totalAmount: number;     // grand total for the order
+  totalAmount: number;   // grand total for the order
   status: OrderStatus;
-  deliveredAt?: Date;      // set when chef marks as delivered/done
+  deliveredAt?: Date;    // set when marked as delivered
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,38 +28,65 @@ export interface OrderDoc extends Document {
 // ==============================
 // Schemas
 // ==============================
-const OrderItemSchema = new Schema<OrderItem>({
-  name:       { type: String, required: true },
-  qty:        { type: Number, required: true },
-  price:      { type: Number, required: true },
-  category:   { type: String, required: true },
-  dressings:  { type: [String], default: [] }, // ⬅️ keep optional but persisted
-});
+const OrderItemSchema = new Schema<OrderItem>(
+  {
+    name:      { type: String, required: true },
+    qty:       { type: Number, required: true },
+    price:     { type: Number, required: true },
+    category:  { type: String, required: true },
+    dressings: { type: [String], default: [] },
+  },
+  { _id: true } // keep item-level _id (matches your stored documents)
+);
 
 const OrderSchema = new Schema<OrderDoc>(
   {
     orderNumber: { type: Number, required: true, unique: true },
-    categories:  { type: [String], required: true },
-    items:       { type: [OrderItemSchema], required: true },
+    categories:  { type: [String], required: true, default: [] },
+    items:       { type: [OrderItemSchema], required: true, default: [] },
     totalAmount: { type: Number, required: true },
     status: {
       type: String,
-      enum: ["PENDING", "CONFIRMED", "DELIVERED"], // ⬅️ added DELIVERED
+      enum: ["PENDING", "CONFIRMED", "DELIVERED"],
       default: "PENDING",
+      required: true,
     },
-    deliveredAt: { type: Date }, // ⬅️ timestamp when handed to customer
-    // Do NOT define createdAt manually; let timestamps handle both fields
+    deliveredAt: { type: Date },
   },
-  { timestamps: true } // adds createdAt & updatedAt
+  {
+    timestamps: true,        // adds createdAt & updatedAt
+    minimize: false,         // keep empty arrays/objects if set
+  }
 );
+
+// Helpful index (unique already declared on the path; this is explicit)
+OrderSchema.index({ orderNumber: 1 }, { unique: true });
+
+// Optional: toJSON/toObject transform to stringify _id if you like
+OrderSchema.set("toJSON", {
+  virtuals: true,
+  versionKey: true,
+  transform: (_doc, ret) => {
+    if (ret._id) ret._id = ret._id.toString();
+    return ret;
+  },
+});
+OrderSchema.set("toObject", {
+  virtuals: true,
+  versionKey: true,
+  transform: (_doc, ret) => {
+    if (ret._id) ret._id = ret._id.toString();
+    return ret;
+  },
+});
 
 // ==============================
 // Model
 // ==============================
-export const OrderModel =
-  models.Order || model<OrderDoc>("Order", OrderSchema);
+export const OrderModel: mongoose.Model<OrderDoc> =
+  (models.Order as mongoose.Model<OrderDoc>) || model<OrderDoc>("Order", OrderSchema);
 
-// Optional: helpful type guard for runtime use (if you need it elsewhere)
+// Optional: tiny helper you already had as an example
 export function isDelivered(order: Pick<OrderDoc, "status">): boolean {
   return order.status === "DELIVERED";
 }

@@ -1,7 +1,8 @@
+// app/order/page.tsx
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 // ==============================
 // Types
@@ -47,7 +48,9 @@ const DRESSING_PRICES: Record<Dressing, number> = {
 };
 
 // ==============================
-// Menu Items
+//
+// Menu Items (static list)
+//
 // ==============================
 const ITEMS: MenuItem[] = [
   // 🧆 Bites
@@ -120,15 +123,31 @@ function formatINR(n: number) {
   }).format(n);
 }
 
+// Filter only the dressings we support (safety for DB values)
+function asSupportedDressings(values: unknown): Dressing[] {
+  const set = new Set<Dressing>();
+  if (Array.isArray(values)) {
+    for (const v of values) {
+      if (v === "Yogurt" || v === "Chipotle" || v === "Mint") set.add(v);
+    }
+  }
+  return Array.from(set);
+}
+
 // ==============================
 // Component
 // ==============================
 export default function OrderPage() {
   const router = useRouter();
+  const sp = useSearchParams();
+  const isEdit = sp.get("edit") === "1";
+  const orderId = sp.get("orderId") || "";
+
   const [active, setActive] = useState<Category>("Bites");
   const [cart, setCart] = useState<Cart>({});
   const [saladDressings, setSaladDressings] = useState<Record<string, Dressing[]>>({});
   const [outOfStock, setOutOfStock] = useState<Record<string, boolean>>({});
+  const [loadingOrder, setLoadingOrder] = useState<boolean>(false);
 
   const setDressingSelected = (itemId: string, dressing: Dressing, on: boolean) => {
     setSaladDressings((prev) => {
@@ -199,6 +218,71 @@ export default function OrderPage() {
     return cart[key] || 0;
   };
 
+  // ==============================
+  // EDIT MODE: hydrate cart from existing order
+  // ==============================
+  useEffect(() => {
+    if (!isEdit || !orderId) return;
+
+    (async () => {
+      try {
+        setLoadingOrder(true);
+        const res = await fetch(`/api/orders/${orderId}`, { cache: "no-store" });
+        const json = await res.json();
+        if (!json?.ok || !json.order) throw new Error(json?.error || "Failed to load order");
+
+        const dbItems = (json.order.items || []) as Array<{
+          name: string;
+          qty: number;
+          price: number;        // price per unit (already includes dressings)
+          category: string;
+          dressings?: unknown[];
+        }>;
+
+        // Build a fresh cart from DB items
+        const nextCart: Cart = {};
+        const nextDressings: Record<string, Dressing[]> = {};
+
+        for (const it of dbItems) {
+          // Map DB item.name -> our menu item id (exact name match)
+          const m = ITEMS.find((x) => x.name === it.name);
+          if (!m) {
+            // Unknown item name — skip gracefully (or log)
+            console.warn("Unknown menu item from DB:", it.name);
+            continue;
+          }
+          const allowDress = m.allowDressings && m.category === "Salad Bowls";
+          const chosen = allowDress ? asSupportedDressings(it.dressings) : [];
+
+          // Create the composite key and add qty
+          const key = cartKey(m.id, chosen);
+          nextCart[key] = (nextCart[key] || 0) + Math.max(0, Math.floor(it.qty || 0));
+
+          // Optional: preload UI selection for this item (best-effort; note: if multiple
+          // dress-combos exist for same item, the final one wins in the toggle UI)
+          if (allowDress && chosen.length > 0) {
+            nextDressings[m.id] = chosen;
+          }
+        }
+
+        setCart(nextCart);
+        if (Object.keys(nextDressings).length > 0) setSaladDressings((prev) => ({ ...prev, ...nextDressings }));
+
+        // Optionally set active tab to the first category involved in this order
+        const firstKey = Object.keys(nextCart)[0];
+        if (firstKey) {
+          const firstId = firstKey.split(DRESS_KEY_PREFIX)[0];
+          const firstItem = ITEMS.find((i) => i.id === firstId);
+          if (firstItem) setActive(firstItem.category);
+        }
+      } catch (e) {
+        alert((e as Error).message || "Failed to load order");
+      } finally {
+        setLoadingOrder(false);
+      }
+    })();
+  }, [isEdit, orderId]);
+
   const checkout = async () => {
     const itemsList = Object.entries(cart).map(([key, qty]) => {
       const id = key.split(DRESS_KEY_PREFIX)[0];
@@ -206,34 +290,54 @@ export default function OrderPage() {
       const dressPart = key.includes(DRESS_KEY_PREFIX)
         ? key.split(DRESS_KEY_PREFIX)[1]
         : "";
-      const chosenDressings = dressPart ? dressPart.split("+") as Dressing[] : [];
+      const chosenDressings = dressPart ? (dressPart.split("+") as Dressing[]) : [];
       const dressingCost = chosenDressings.reduce((s, d) => s + (DRESSING_PRICES[d] || 0), 0);
       return {
         name: item?.name || "",
         qty,
-        price: (item?.price || 0) + dressingCost, // ✅ price includes dressing cost
+        price: (item?.price || 0) + dressingCost, // ✅ per-unit price includes dressing cost
         category: item?.category || "",
         dressings: chosenDressings,
       };
     });
 
     const categories = [
-      ...new Set(
-        itemsList.map((i) => i.category).filter(Boolean)
-      ),
+      ...new Set(itemsList.map((i) => i.category).filter(Boolean)),
     ];
 
-    const res = await fetch("/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        categories,
-        items: itemsList,
-        totalAmount,
-      }),
-    });
-
-    if (res.ok) router.push("/orders");
+    if (isEdit && orderId) {
+      // UPDATE existing order
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: itemsList,
+          categories, // server recomputes totalAmount
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        alert(`Failed to save changes: ${json?.error || res.statusText}`);
+        return;
+      }
+      router.push("/orders");
+    } else {
+      // CREATE new order
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          categories,
+          items: itemsList,
+          totalAmount, // your /api/orders POST currently expects totalAmount
+        }),
+      });
+      if (res.ok) router.push("/orders");
+      else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to place order: ${err?.error || res.statusText}`);
+      }
+    }
   };
 
   const renderItemCard = (item: MenuItem) => {
@@ -251,12 +355,10 @@ export default function OrderPage() {
       <article className={`menu-card ${isOut ? "out-of-stock" : ""}`} key={item.id}>
         <header className="menu-card-header">
           <h3 className="menu-title">{item.name}</h3>
-          <div className="menu-price">
-            {formatINR(item.price + extra)}
-          </div>
+          <div className="menu-price">{formatINR(item.price + extra)}</div>
         </header>
 
-        {/* Toggle Switch */}
+        {/* Toggle Stock */}
         <div className="stock-toggle">
           <label className="switch">
             <input
@@ -311,7 +413,7 @@ export default function OrderPage() {
             disabled={isOut}
             onClick={() => inc(item.id, selectedDressings)}
           >
-            Add
+            {isEdit ? "Add (Edit)" : "Add"}
           </button>
         </div>
       </article>
@@ -321,12 +423,21 @@ export default function OrderPage() {
   return (
     <section className="hero">
       <div className="back-container">
-        <button className="btn secondary back-btn" onClick={() => router.push("/")}>
+        <button
+          className="btn secondary back-btn"
+          onClick={() => router.push(isEdit ? "/orders" : "/")}
+        >
           ← Back
         </button>
       </div>
 
       <div className="glass">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="orders-heading">
+            {isEdit ? (loadingOrder ? "Loading Order…" : "Edit Order") : "Create Order"}
+          </h2>
+        </div>
+
         <nav className="tabs">
           {CATEGORIES.map((cat) => (
             <button
@@ -339,7 +450,9 @@ export default function OrderPage() {
           ))}
         </nav>
 
-        {visibleItems.length === 0 ? (
+        {loadingOrder ? (
+          <div className="empty-note">Fetching existing order…</div>
+        ) : visibleItems.length === 0 ? (
           <div className="empty-note">
             No items in <strong>{active}</strong> yet.
           </div>
@@ -364,7 +477,7 @@ export default function OrderPage() {
             Clear
           </button>
           <button className="btn" onClick={checkout} disabled={totalItems === 0}>
-            Checkout →
+            {isEdit ? "Save Changes →" : "Checkout →"}
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 // ==============================
 // Types
@@ -84,6 +85,8 @@ export default function OrdersPage() {
   const [clearing, setClearing] = useState(false);
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [deliveringId, setDeliveringId] = useState<string | null>(null);
+
+  const router = useRouter();
 
   // per-order per-item quantities chosen for refund
   // shape: { [orderId]: { [itemName]: number } }
@@ -470,6 +473,18 @@ export default function OrdersPage() {
 
                     {/* ACTIONS */}
                     <td>
+                      {/* ✅ Edit button (hide for DELIVERED) */}
+                      {(order.status === "PENDING" || order.status === "CONFIRMED") && (
+                        <button
+                          className="btn secondary"
+                          style={{ marginBottom: 6 }}
+                          onClick={() => router.push(`/order?edit=1&orderId=${order._id}`)}
+                          title="Edit this order"
+                        >
+                          Edit ✏️
+                        </button>
+                      )}
+
                       {order.status === "PENDING" && (
                         <button
                           className="btn confirm-btn"
