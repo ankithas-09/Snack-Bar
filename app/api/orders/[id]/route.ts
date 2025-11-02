@@ -4,7 +4,7 @@ import dbConnect from "@/lib/db";
 import mongoose from "mongoose";
 import { OrderModel, type OrderItem, type OrderStatus } from "@/models/Order";
 
-/* ---------- Types for lean() so _id is ObjectId, not unknown ---------- */
+/* ---------- Types for lean() so _id is ObjectId (not unknown) ---------- */
 type OrderLean = {
   _id: mongoose.Types.ObjectId;
   orderNumber: number;
@@ -39,12 +39,12 @@ function toStringArray(a: unknown[]): string[] {
 /* ---------- GET /api/orders/[id] ---------- */
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ id: string }> } // params is a Promise in latest Next
+  ctx: { params: Promise<{ id: string }> } // Next.js: params is a Promise
 ) {
   try {
     await dbConnect();
 
-    const { id } = await ctx.params; // ✅ await the params
+    const { id } = await ctx.params; // ✅ await
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ ok: false, error: "Invalid order id" }, { status: 400 });
     }
@@ -77,57 +77,72 @@ export async function GET(
 /* ---------- PUT /api/orders/[id] ---------- */
 export async function PUT(
   req: Request,
-  ctx: { params: Promise<{ id: string }> } // params is a Promise in latest Next
+  ctx: { params: Promise<{ id: string }> } // Next.js: params is a Promise
 ) {
   try {
     await dbConnect();
 
-    const { id } = await ctx.params; // ✅ await the params
+    const { id } = await ctx.params; // ✅ await
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ ok: false, error: "Invalid order id" }, { status: 400 });
     }
 
     const body: unknown = await req.json();
-    const b = body as { items?: unknown[]; categories?: unknown[] };
-
-    if (!Array.isArray(b.items) || b.items.length === 0) {
-      return NextResponse.json({ ok: false, error: "Items are required." }, { status: 400 });
-    }
-
-    const items = normalizeItems(b.items);
-    if (items.some((i) => !i.name || !i.category || i.qty <= 0 || i.price < 0)) {
-      return NextResponse.json({ ok: false, error: "Invalid items payload." }, { status: 400 });
-    }
-
-    const categories: string[] = Array.isArray(b.categories)
-      ? [...new Set(toStringArray(b.categories))]
-      : [...new Set(items.map((i) => i.category))];
+    const b = body as { items?: unknown[]; categories?: unknown[]; status?: unknown };
 
     const existing = await OrderModel.findById(id);
     if (!existing) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    // Block editing delivered orders (adjust if you want different rules)
-    if (existing.status && existing.status.toUpperCase() === "DELIVERED") {
-      return NextResponse.json(
-        { ok: false, error: "Cannot edit a delivered order." },
-        { status: 400 }
-      );
+    // Optional: update status if provided (e.g., external callers)
+    if (typeof b.status === "string") {
+      const newStatus = b.status.toUpperCase();
+      if (newStatus === "PENDING" || newStatus === "CONFIRMED" || newStatus === "DELIVERED") {
+        existing.status = newStatus as OrderStatus;
+        if (newStatus === "DELIVERED" && !existing.deliveredAt) {
+          existing.deliveredAt = new Date();
+        }
+      }
     }
 
-    existing.items = items;
-    existing.categories = categories;
-    existing.totalAmount = sumTotal(items);
+    // If items are provided, validate + update
+    if (Array.isArray(b.items)) {
+      if (b.items.length === 0) {
+        return NextResponse.json({ ok: false, error: "Items are required." }, { status: 400 });
+      }
+
+      // Block editing delivered orders
+      if (existing.status && existing.status.toUpperCase() === "DELIVERED") {
+        return NextResponse.json(
+          { ok: false, error: "Cannot edit a delivered order." },
+          { status: 400 }
+        );
+      }
+
+      const items = normalizeItems(b.items);
+      if (items.some((i) => !i.name || !i.category || i.qty <= 0 || i.price < 0)) {
+        return NextResponse.json({ ok: false, error: "Invalid items payload." }, { status: 400 });
+      }
+
+      const categories: string[] = Array.isArray(b.categories)
+        ? [...new Set(toStringArray(b.categories))]
+        : [...new Set(items.map((i) => i.category))];
+
+      existing.items = items;
+      existing.categories = categories;
+      existing.totalAmount = sumTotal(items); // authoritative recompute
+    }
 
     await existing.save();
 
-    // Use string getter to avoid _id: unknown typing on Document
+    // Use .id (string getter) to avoid _id: unknown typing on Document
     return NextResponse.json({
       ok: true,
       orderId: existing.id,
-      totalAmount: existing.totalAmount,
       status: existing.status,
+      totalAmount: existing.totalAmount,
+      deliveredAt: existing.deliveredAt ?? null,
       updatedAt: existing.updatedAt,
     });
   } catch (e) {

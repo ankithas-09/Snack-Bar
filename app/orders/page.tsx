@@ -264,6 +264,7 @@ export default function OrdersPage() {
       const res = await fetch(`/api/orders/${o._id}/confirm`, { method: "PATCH" });
       if (!res.ok) throw new Error("Confirm failed");
       const data = await res.json();
+      // After confirm -> status becomes CONFIRMED, so Edit button disappears
       setOrders((prev) => prev.map((x) => (x._id === o._id ? { ...x, status: data.status } : x)));
       console.log(`✅ Order ${o.orderNumber} confirmed`);
     } catch (e: any) {
@@ -370,7 +371,6 @@ export default function OrdersPage() {
                                 {fullyRefunded ? (
                                   <span className="muted">Fully refunded</span>
                                 ) : (i.qty === 1 || remaining === 1) ? (
-                                  // ✅ Single-quantity or only 1 remaining: show checkbox, not number input
                                   <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                     <input
                                       type="checkbox"
@@ -382,7 +382,6 @@ export default function OrdersPage() {
                                     <span className="muted">Refund 1</span>
                                   </label>
                                 ) : (
-                                  // ✅ Multi-quantity: show number input (0..remaining)
                                   <>
                                     <input
                                       type="number"
@@ -473,8 +472,8 @@ export default function OrdersPage() {
 
                     {/* ACTIONS */}
                     <td>
-                      {/* ✅ Edit button (hide for DELIVERED) */}
-                      {(order.status === "PENDING" || order.status === "CONFIRMED") && (
+                      {/* ✅ Edit only while PENDING (disappears after Confirm) */}
+                      {order.status === "PENDING" && (
                         <button
                           className="btn secondary"
                           style={{ marginBottom: 6 }}
