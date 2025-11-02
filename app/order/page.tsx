@@ -1,7 +1,7 @@
 // app/order/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 // ==============================
@@ -48,9 +48,7 @@ const DRESSING_PRICES: Record<Dressing, number> = {
 };
 
 // ==============================
-//
 // Menu Items (static list)
-//
 // ==============================
 const ITEMS: MenuItem[] = [
   // 🧆 Bites
@@ -134,10 +132,21 @@ function asSupportedDressings(values: unknown): Dressing[] {
   return Array.from(set);
 }
 
-// ==============================
-// Component
-// ==============================
+/* ==============================
+   FIX: Wrap useSearchParams in Suspense
+   ============================== */
 export default function OrderPage() {
+  return (
+    <Suspense fallback={<div className="empty-note">Loading…</div>}>
+      <OrderPageInner />
+    </Suspense>
+  );
+}
+
+/* ==============================
+   Real page content (uses useSearchParams)
+   ============================== */
+function OrderPageInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const isEdit = sp.get("edit") === "1";
@@ -244,31 +253,25 @@ export default function OrderPage() {
         const nextDressings: Record<string, Dressing[]> = {};
 
         for (const it of dbItems) {
-          // Map DB item.name -> our menu item id (exact name match)
           const m = ITEMS.find((x) => x.name === it.name);
           if (!m) {
-            // Unknown item name — skip gracefully (or log)
             console.warn("Unknown menu item from DB:", it.name);
             continue;
           }
           const allowDress = m.allowDressings && m.category === "Salad Bowls";
           const chosen = allowDress ? asSupportedDressings(it.dressings) : [];
 
-          // Create the composite key and add qty
           const key = cartKey(m.id, chosen);
           nextCart[key] = (nextCart[key] || 0) + Math.max(0, Math.floor(it.qty || 0));
 
-          // Optional: preload UI selection for this item (best-effort; note: if multiple
-          // dress-combos exist for same item, the final one wins in the toggle UI)
-          if (allowDress && chosen.length > 0) {
-            nextDressings[m.id] = chosen;
-          }
+          if (allowDress && chosen.length > 0) nextDressings[m.id] = chosen;
         }
 
         setCart(nextCart);
-        if (Object.keys(nextDressings).length > 0) setSaladDressings((prev) => ({ ...prev, ...nextDressings }));
+        if (Object.keys(nextDressings).length > 0) {
+          setSaladDressings((prev) => ({ ...prev, ...nextDressings }));
+        }
 
-        // Optionally set active tab to the first category involved in this order
         const firstKey = Object.keys(nextCart)[0];
         if (firstKey) {
           const firstId = firstKey.split(DRESS_KEY_PREFIX)[0];
@@ -301,9 +304,7 @@ export default function OrderPage() {
       };
     });
 
-    const categories = [
-      ...new Set(itemsList.map((i) => i.category).filter(Boolean)),
-    ];
+    const categories = [...new Set(itemsList.map((i) => i.category).filter(Boolean))];
 
     if (isEdit && orderId) {
       // UPDATE existing order
@@ -329,7 +330,7 @@ export default function OrderPage() {
         body: JSON.stringify({
           categories,
           items: itemsList,
-          totalAmount, // your /api/orders POST currently expects totalAmount
+          totalAmount, // your /api/orders POST expects totalAmount
         }),
       });
       if (res.ok) router.push("/orders");
@@ -345,7 +346,6 @@ export default function OrderPage() {
     const selectedDressings = allowDress ? saladDressings[item.id] || [] : undefined;
     const isOut = outOfStock[item.id];
 
-    // Calculate dressing add-on for display
     const extra =
       allowDress && selectedDressings && selectedDressings.length > 0
         ? selectedDressings.reduce((s, d) => s + (DRESSING_PRICES[d] || 0), 0)
@@ -358,7 +358,6 @@ export default function OrderPage() {
           <div className="menu-price">{formatINR(item.price + extra)}</div>
         </header>
 
-        {/* Toggle Stock */}
         <div className="stock-toggle">
           <label className="switch">
             <input
