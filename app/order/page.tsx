@@ -72,7 +72,7 @@ const ITEMS: MenuItem[] = [
   { id: "salad-protein-packed-soya", category: "Salad Bowls", name: "Protein-Packed Soya Salad", price: 120, allowDressings: true },
 
   // 🍓 Fruit Bowls
-  { id: "fruit-cut-fruit-salad", category: "Fruit Bowls", name: "Cut Fruit Salad", price: 80 }, 
+  { id: "fruit-cut-fruit-salad", category: "Fruit Bowls", name: "Cut Fruit Salad", price: 80 },
   { id: "fruit-creamy-fruit-salad", category: "Fruit Bowls", name: "Creamy Fruit Salad", price: 100 },
 
   // 🥤 Smoothies
@@ -132,8 +132,16 @@ function asSupportedDressings(values: unknown): Dressing[] {
   return Array.from(set);
 }
 
+// ✅ helper to get today's key in IST for localStorage
+function getTodayISTKey() {
+  const todayIST = new Date().toLocaleDateString("en-CA", {
+    timeZone: "Asia/Kolkata",
+  }); // e.g. 2025-11-03
+  return `kreede-snackbar-oos-${todayIST}`;
+}
+
 /* ==============================
-   FIX: Wrap useSearchParams in Suspense
+   Wrap useSearchParams in Suspense
    ============================== */
 export default function OrderPage() {
   return (
@@ -144,7 +152,7 @@ export default function OrderPage() {
 }
 
 /* ==============================
-   Real page content (uses useSearchParams)
+   Real page content
    ============================== */
 function OrderPageInner() {
   const router = useRouter();
@@ -158,6 +166,27 @@ function OrderPageInner() {
   const [outOfStock, setOutOfStock] = useState<Record<string, boolean>>({});
   const [loadingOrder, setLoadingOrder] = useState<boolean>(false);
 
+  // load today's out-of-stock map on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = getTodayISTKey();
+    const raw = window.localStorage.getItem(key);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, boolean>;
+        setOutOfStock(parsed);
+      } catch {
+        // ignore bad JSON
+      }
+    }
+  }, []);
+
+  const saveOutOfStockForToday = (data: Record<string, boolean>) => {
+    if (typeof window === "undefined") return;
+    const key = getTodayISTKey();
+    window.localStorage.setItem(key, JSON.stringify(data));
+  };
+
   const setDressingSelected = (itemId: string, dressing: Dressing, on: boolean) => {
     setSaladDressings((prev) => {
       const current = new Set(prev[itemId] || []);
@@ -167,8 +196,16 @@ function OrderPageInner() {
     });
   };
 
+  // ✅ updated to also persist to localStorage (per day)
   const toggleStock = (id: string) => {
-    setOutOfStock((prev) => ({ ...prev, [id]: !prev[id] }));
+    setOutOfStock((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      // save to localStorage for today
+      saveOutOfStockForToday(next);
+      return next;
+    });
+
+    // also drop it from cart if it was there
     setCart((prev) => {
       const next = { ...prev };
       for (const key of Object.keys(next)) {
@@ -190,9 +227,7 @@ function OrderPageInner() {
       if (!item) return sum;
 
       let base = item.price;
-      const dressPart = key.includes(DRESS_KEY_PREFIX)
-        ? key.split(DRESS_KEY_PREFIX)[1]
-        : "";
+      const dressPart = key.includes(DRESS_KEY_PREFIX) ? key.split(DRESS_KEY_PREFIX)[1] : "";
       if (dressPart) {
         const chosen = dressPart.split("+") as Dressing[];
         const dressCost = chosen.reduce((s, d) => s + (DRESSING_PRICES[d] || 0), 0);
@@ -243,12 +278,11 @@ function OrderPageInner() {
         const dbItems = (json.order.items || []) as Array<{
           name: string;
           qty: number;
-          price: number;        // price per unit (already includes dressings)
+          price: number;
           category: string;
           dressings?: unknown[];
         }>;
 
-        // Build a fresh cart from DB items
         const nextCart: Cart = {};
         const nextDressings: Record<string, Dressing[]> = {};
 
@@ -298,7 +332,7 @@ function OrderPageInner() {
       return {
         name: item?.name || "",
         qty,
-        price: (item?.price || 0) + dressingCost, // ✅ per-unit price includes dressing cost
+        price: (item?.price || 0) + dressingCost,
         category: item?.category || "",
         dressings: chosenDressings,
       };
@@ -307,13 +341,12 @@ function OrderPageInner() {
     const categories = [...new Set(itemsList.map((i) => i.category).filter(Boolean))];
 
     if (isEdit && orderId) {
-      // UPDATE existing order
       const res = await fetch(`/api/orders/${orderId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: itemsList,
-          categories, // server recomputes totalAmount
+          categories,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -323,14 +356,13 @@ function OrderPageInner() {
       }
       router.push("/orders");
     } else {
-      // CREATE new order
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           categories,
           items: itemsList,
-          totalAmount, // your /api/orders POST expects totalAmount
+          totalAmount,
         }),
       });
       if (res.ok) router.push("/orders");

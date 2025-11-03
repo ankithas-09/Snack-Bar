@@ -46,6 +46,11 @@ function toINR(n: number) {
   }).format(n);
 }
 
+// Format a date to YYYY-MM-DD in IST
+function toISTDateString(date: Date) {
+  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // 2025-11-03
+}
+
 // Build map: orderNumber -> { items[], total, lastRefundAt }
 function buildRefundsMap(rows: RefundDoc[]): Record<number, RefundSummary> {
   const map: Record<number, RefundSummary> = {};
@@ -79,18 +84,34 @@ function refundedQtyFor(
 // Component
 // ==============================
 export default function OrdersPage() {
+  const router = useRouter();
+
+  // all orders from API (all days)
+  const [allOrders, setAllOrders] = useState<Order[]>([]);
+  // date-filtered orders to show
   const [orders, setOrders] = useState<Order[]>([]);
   const [refundsByOrder, setRefundsByOrder] = useState<Record<number, RefundSummary>>({});
-  const [cancelMode, setCancelMode] = useState<string | null>(null); // orderId when refund UI is open
+  const [cancelMode, setCancelMode] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [deliveringId, setDeliveringId] = useState<string | null>(null);
 
-  const router = useRouter();
+  // date filter (default to today IST)
+  const [selectedDate, setSelectedDate] = useState<string>(() => toISTDateString(new Date()));
 
   // per-order per-item quantities chosen for refund
-  // shape: { [orderId]: { [itemName]: number } }
   const [selectedQtys, setSelectedQtys] = useState<Record<string, Record<string, number>>>({});
+
+  // ==============================
+  // helper to apply date filter on local data
+  // ==============================
+  const applyLocalFilter = (newDate: string, data?: Order[]) => {
+    const source = data ?? allOrders;
+    const filtered = source.filter(
+      (o) => toISTDateString(new Date(o.createdAt)) === newDate
+    );
+    setOrders(filtered);
+  };
 
   // ==============================
   // Fetch orders (auto-refresh every 5s)
@@ -102,7 +123,16 @@ export default function OrdersPage() {
       try {
         const res = await fetch("/api/orders");
         const data: Order[] = await res.json();
-        if (active) setOrders(data);
+
+        if (!active) return;
+
+        // keep all
+        setAllOrders(data);
+        // filter for selectedDate
+        const filtered = data.filter(
+          (o) => toISTDateString(new Date(o.createdAt)) === selectedDate
+        );
+        setOrders(filtered);
       } catch (e) {
         console.error("Failed to fetch orders:", e);
       }
@@ -114,7 +144,7 @@ export default function OrdersPage() {
       active = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [selectedDate]);
 
   // ==============================
   // Fetch refunds (auto-refresh every 5s)
@@ -264,7 +294,7 @@ export default function OrdersPage() {
       const res = await fetch(`/api/orders/${o._id}/confirm`, { method: "PATCH" });
       if (!res.ok) throw new Error("Confirm failed");
       const data = await res.json();
-      // After confirm -> status becomes CONFIRMED, so Edit button disappears
+      // After confirm -> status becomes CONFIRMED
       setOrders((prev) => prev.map((x) => (x._id === o._id ? { ...x, status: data.status } : x)));
       console.log(`✅ Order ${o.orderNumber} confirmed`);
     } catch (e: any) {
@@ -304,12 +334,50 @@ export default function OrdersPage() {
   // ==============================
   return (
     <section className="hero">
-      <div className="back-container">
-        <button className="btn secondary back-btn" onClick={() => history.back()}>
-          ← Back
-        </button>
+      {/* Top bar: back + date filter */}
+      <div
+        className="top-bar"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "1rem",
+          marginBottom: "1rem",
+        }}
+      >
+        <div className="back-container">
+          <button className="btn secondary back-btn" onClick={() => history.back()}>
+            ← Back
+          </button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label className="muted" style={{ fontSize: 14 }}>
+            View orders for:
+          </label>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => {
+              const val = e.target.value;
+              setSelectedDate(val);
+              applyLocalFilter(val);
+            }}
+          />
+          <button
+            className="btn secondary"
+            onClick={() => {
+              const today = toISTDateString(new Date());
+              setSelectedDate(today);
+              applyLocalFilter(today);
+            }}
+          >
+            Today
+          </button>
+        </div>
       </div>
 
+      {/* main container */}
       <div className="glass">
         <div className="orders-header">
           <h2 className="orders-heading">📋 Orders</h2>
@@ -323,7 +391,7 @@ export default function OrdersPage() {
         </div>
 
         {orders.length === 0 ? (
-          <p className="empty-note">No orders yet.</p>
+          <p className="empty-note">No orders for this date.</p>
         ) : (
           <table className="orders-table">
             <thead>
@@ -360,7 +428,12 @@ export default function OrdersPage() {
                           <div
                             key={i.name}
                             className="item-row"
-                            style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              marginBottom: 4,
+                            }}
                           >
                             <span style={{ minWidth: 160 }}>
                               {i.name} x{i.qty}
@@ -370,7 +443,7 @@ export default function OrdersPage() {
                               <>
                                 {fullyRefunded ? (
                                   <span className="muted">Fully refunded</span>
-                                ) : (i.qty === 1 || remaining === 1) ? (
+                                ) : i.qty === 1 || remaining === 1 ? (
                                   <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                     <input
                                       type="checkbox"
@@ -472,7 +545,6 @@ export default function OrdersPage() {
 
                     {/* ACTIONS */}
                     <td>
-                      {/* ✅ Edit only while PENDING (disappears after Confirm) */}
                       {order.status === "PENDING" && (
                         <button
                           className="btn secondary"
