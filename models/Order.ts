@@ -23,6 +23,7 @@ export interface OrderDoc extends Document {
   deliveredAt?: Date;    // set when marked as delivered
   createdAt: Date;
   updatedAt: Date;
+  employee?: boolean;    // ⭐ NEW — true when it was an employee order
 }
 
 // ==============================
@@ -52,6 +53,9 @@ const OrderSchema = new Schema<OrderDoc>(
       required: true,
     },
     deliveredAt: { type: Date },
+
+    // ⭐ NEW FIELD
+    employee: { type: Boolean, default: false },
   },
   {
     timestamps: true,        // adds createdAt & updatedAt

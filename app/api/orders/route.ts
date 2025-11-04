@@ -26,6 +26,9 @@ export async function POST(req: Request) {
     const lastOrder = await OrderModel.findOne().sort({ orderNumber: -1 });
     const nextOrderNumber = lastOrder ? lastOrder.orderNumber + 1 : 1;
 
+    // ⭐ persist employee flag too (will be false if not sent)
+    const isEmployee = !!data.employee;
+
     // Persist items as-is (supports optional `dressings` per item)
     const newOrder = await OrderModel.create({
       orderNumber: nextOrderNumber,
@@ -33,6 +36,7 @@ export async function POST(req: Request) {
       items: data.items, // { name, qty, price (incl. dressings), category, dressings?: string[] }
       totalAmount: data.totalAmount,
       status: "PENDING",
+      employee: isEmployee, // ⭐ NEW
     });
 
     return NextResponse.json(newOrder);
@@ -49,6 +53,7 @@ export async function GET() {
   try {
     await dbConnect();
     const orders = await OrderModel.find().sort({ createdAt: -1 });
+    // orders now include .employee if present
     return NextResponse.json(orders);
   } catch (err) {
     console.error("❌ Error fetching orders:", err);

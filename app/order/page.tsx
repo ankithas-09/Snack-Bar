@@ -165,6 +165,7 @@ function OrderPageInner() {
   const [saladDressings, setSaladDressings] = useState<Record<string, Dressing[]>>({});
   const [outOfStock, setOutOfStock] = useState<Record<string, boolean>>({});
   const [loadingOrder, setLoadingOrder] = useState<boolean>(false);
+  const [employeeOrder, setEmployeeOrder] = useState<boolean>(false); // ⭐ NEW
 
   // load today's out-of-stock map on mount
   useEffect(() => {
@@ -237,6 +238,9 @@ function OrderPageInner() {
       return sum + base * qty;
     }, 0);
   }, [cart]);
+
+  // ⭐ this is what we will actually show/send
+  const payableAmount = employeeOrder ? 0 : totalAmount;
 
   const inc = (id: string, dressings?: Dressing[]) => {
     if (outOfStock[id]) return;
@@ -347,6 +351,8 @@ function OrderPageInner() {
         body: JSON.stringify({
           items: itemsList,
           categories,
+          // you can store the flag even in edit
+          employee: employeeOrder, // ⭐ optional
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -362,7 +368,8 @@ function OrderPageInner() {
         body: JSON.stringify({
           categories,
           items: itemsList,
-          totalAmount,
+          totalAmount: payableAmount, // ⭐ 0 if employee
+          employee: employeeOrder,    // ⭐ to identify later
         }),
       });
       if (res.ok) router.push("/orders");
@@ -497,12 +504,23 @@ function OrderPageInner() {
           <span className="cart-count">
             {totalItems} item{totalItems !== 1 && "s"}
           </span>
-          <span className="cart-amount">{formatINR(totalAmount)}</span>
+          <span className="cart-amount">{formatINR(payableAmount)}</span>
+          {/* ⭐ Employee toggle button */}
+          <button
+            type="button"
+            className={`btn secondary ml-2 ${employeeOrder ? "active" : ""}`}
+            onClick={() => setEmployeeOrder((v) => !v)}
+          >
+            {employeeOrder ? "Employee: ON" : "Employee"}
+          </button>
         </div>
         <div className="cartbar-right">
           <button
             className="btn secondary"
-            onClick={() => setCart({})}
+            onClick={() => {
+              setCart({});
+              setEmployeeOrder(false); // reset when clearing
+            }}
             disabled={totalItems === 0}
           >
             Clear

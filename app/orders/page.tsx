@@ -19,6 +19,7 @@ type Order = {
   status: OrderStatus;
   createdAt: string;
   deliveredAt?: string;
+  employee?: boolean;
 };
 
 type RefundDoc = {
@@ -86,9 +87,7 @@ function refundedQtyFor(
 export default function OrdersPage() {
   const router = useRouter();
 
-  // all orders from API (all days)
   const [allOrders, setAllOrders] = useState<Order[]>([]);
-  // date-filtered orders to show
   const [orders, setOrders] = useState<Order[]>([]);
   const [refundsByOrder, setRefundsByOrder] = useState<Record<number, RefundSummary>>({});
   const [cancelMode, setCancelMode] = useState<string | null>(null);
@@ -96,15 +95,10 @@ export default function OrdersPage() {
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [deliveringId, setDeliveringId] = useState<string | null>(null);
 
-  // date filter (default to today IST)
   const [selectedDate, setSelectedDate] = useState<string>(() => toISTDateString(new Date()));
 
-  // per-order per-item quantities chosen for refund
   const [selectedQtys, setSelectedQtys] = useState<Record<string, Record<string, number>>>({});
 
-  // ==============================
-  // helper to apply date filter on local data
-  // ==============================
   const applyLocalFilter = (newDate: string, data?: Order[]) => {
     const source = data ?? allOrders;
     const filtered = source.filter(
@@ -113,9 +107,7 @@ export default function OrdersPage() {
     setOrders(filtered);
   };
 
-  // ==============================
-  // Fetch orders (auto-refresh every 5s)
-  // ==============================
+  // fetch orders
   useEffect(() => {
     let active = true;
 
@@ -126,9 +118,7 @@ export default function OrdersPage() {
 
         if (!active) return;
 
-        // keep all
         setAllOrders(data);
-        // filter for selectedDate
         const filtered = data.filter(
           (o) => toISTDateString(new Date(o.createdAt)) === selectedDate
         );
@@ -146,9 +136,7 @@ export default function OrdersPage() {
     };
   }, [selectedDate]);
 
-  // ==============================
-  // Fetch refunds (auto-refresh every 5s)
-  // ==============================
+  // fetch refunds
   useEffect(() => {
     let active = true;
 
@@ -170,9 +158,6 @@ export default function OrdersPage() {
     };
   }, []);
 
-  // ==============================
-  // Refund helpers (quantity UI)
-  // ==============================
   const setQty = (orderId: string, itemName: string, qty: number) => {
     setSelectedQtys((prev) => ({
       ...prev,
@@ -196,9 +181,6 @@ export default function OrdersPage() {
     setSelectedQtys((prev) => ({ ...prev, [orderId]: {} }));
   };
 
-  // ==============================
-  // Refund flow (POST /api/refunds)
-  // ==============================
   const refundItems = async (order: Order) => {
     const perItem = selectedQtys[order._id] || {};
     const refundable: Item[] = [];
@@ -240,7 +222,6 @@ export default function OrdersPage() {
     if (res.ok) {
       const data: { success: boolean; refunds: RefundDoc[] } = await res.json();
 
-      // Immediately reflect in UI without waiting for next poll
       setRefundsByOrder((prev) => {
         const cur = prev[order.orderNumber] || { items: [], total: 0, lastRefundAt: undefined };
         const newItems = [...cur.items, ...data.refunds.flatMap((r) => r.refundedItems || [])];
@@ -264,9 +245,6 @@ export default function OrdersPage() {
     }
   };
 
-  // ==============================
-  // Danger: clear all orders
-  // ==============================
   const clearAllOrders = async () => {
     if (orders.length === 0) return;
     const ok = confirm("This will permanently delete ALL orders. Continue?");
@@ -285,18 +263,13 @@ export default function OrdersPage() {
     }
   };
 
-  // ==============================
-  // Confirm (no printing)
-  // ==============================
   const printAndConfirm = async (o: Order) => {
     try {
       setPrintingId(o._id);
       const res = await fetch(`/api/orders/${o._id}/confirm`, { method: "PATCH" });
       if (!res.ok) throw new Error("Confirm failed");
       const data = await res.json();
-      // After confirm -> status becomes CONFIRMED
       setOrders((prev) => prev.map((x) => (x._id === o._id ? { ...x, status: data.status } : x)));
-      console.log(`✅ Order ${o.orderNumber} confirmed`);
     } catch (e: any) {
       alert(`Confirm failed: ${e?.message || e}`);
     } finally {
@@ -304,9 +277,6 @@ export default function OrdersPage() {
     }
   };
 
-  // ==============================
-  // Mark delivered
-  // ==============================
   const markDelivered = async (o: Order) => {
     try {
       setDeliveringId(o._id);
@@ -321,7 +291,6 @@ export default function OrdersPage() {
           x._id === o._id ? { ...x, status: data.status, deliveredAt: data.deliveredAt } : x
         )
       );
-      console.log(`✅ Order ${o.orderNumber} marked delivered`);
     } catch (e: any) {
       alert(`Deliver failed: ${e?.message || e}`);
     } finally {
@@ -329,12 +298,8 @@ export default function OrdersPage() {
     }
   };
 
-  // ==============================
-  // Render
-  // ==============================
   return (
     <section className="hero">
-      {/* Top bar: back + date filter */}
       <div
         className="top-bar"
         style={{
@@ -377,7 +342,6 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {/* main container */}
       <div className="glass">
         <div className="orders-header">
           <h2 className="orders-heading">📋 Orders</h2>
@@ -400,6 +364,7 @@ export default function OrdersPage() {
                 <th>Date</th>
                 <th>Categories</th>
                 <th>Items</th>
+                <th>Employee</th>
                 <th>Total</th>
                 <th>Refunds</th>
                 <th>Status</th>
@@ -410,13 +375,14 @@ export default function OrdersPage() {
             <tbody>
               {orders.map((order, idx) => {
                 const refund = refundsByOrder[order.orderNumber];
+                const rowClass = idx % 2 === 0 ? "even" : "odd";
+
                 return (
-                  <tr key={order._id} className={idx % 2 === 0 ? "even" : "odd"}>
+                  <tr key={order._id} className={rowClass}>
                     <td>{order.orderNumber}</td>
                     <td>{new Date(order.createdAt).toLocaleDateString("en-IN")}</td>
                     <td>{order.categories.join(", ")}</td>
 
-                    {/* ITEMS + Partial Refund Inputs */}
                     <td>
                       {order.items.map((i) => {
                         const already = refundedQtyFor(refundsByOrder, order.orderNumber, i.name);
@@ -427,7 +393,6 @@ export default function OrdersPage() {
                         return (
                           <div
                             key={i.name}
-                            className="item-row"
                             style={{
                               display: "flex",
                               alignItems: "center",
@@ -439,52 +404,50 @@ export default function OrdersPage() {
                               {i.name} x{i.qty}
                             </span>
 
-                            {cancelMode === order._id && (
-                              <>
-                                {fullyRefunded ? (
-                                  <span className="muted">Fully refunded</span>
-                                ) : i.qty === 1 || remaining === 1 ? (
-                                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <input
-                                      type="checkbox"
-                                      checked={value > 0}
-                                      onChange={(e) =>
-                                        setQty(order._id, i.name, e.target.checked ? 1 : 0)
-                                      }
-                                    />
-                                    <span className="muted">Refund 1</span>
-                                  </label>
-                                ) : (
-                                  <>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      max={remaining}
-                                      value={value}
-                                      onChange={(e) =>
-                                        setQty(
-                                          order._id,
-                                          i.name,
-                                          Math.min(
-                                            remaining,
-                                            Math.max(0, Number(e.target.value) || 0)
-                                          )
+                            {cancelMode === order._id ? (
+                              fullyRefunded ? (
+                                <span className="muted">Fully refunded</span>
+                              ) : i.qty === 1 || remaining === 1 ? (
+                                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={value > 0}
+                                    onChange={(e) =>
+                                      setQty(order._id, i.name, e.target.checked ? 1 : 0)
+                                    }
+                                  />
+                                  <span className="muted">Refund 1</span>
+                                </label>
+                              ) : (
+                                <>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={remaining}
+                                    value={value}
+                                    onChange={(e) =>
+                                      setQty(
+                                        order._id,
+                                        i.name,
+                                        Math.min(
+                                          remaining,
+                                          Math.max(0, Number(e.target.value) || 0)
                                         )
-                                      }
-                                      className="qty-input"
-                                      style={{ width: 72 }}
-                                    />
-                                    <span className="muted">Remaining: {remaining}</span>
-                                  </>
-                                )}
-                              </>
-                            )}
+                                      )
+                                    }
+                                    className="qty-input"
+                                    style={{ width: 72 }}
+                                  />
+                                  <span className="muted">Remaining: {remaining}</span>
+                                </>
+                              )
+                            ) : null}
                           </div>
                         );
                       })}
 
-                      {cancelMode === order._id && (
-                        <div className="mt-6" style={{ display: "flex", gap: 8 }}>
+                      {cancelMode === order._id ? (
+                        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                           <button className="btn secondary" onClick={() => setAllToMax(order)}>
                             Refund all remaining
                           </button>
@@ -492,13 +455,24 @@ export default function OrdersPage() {
                             Clear selection
                           </button>
                         </div>
+                      ) : null}
+                    </td>
+
+                    <td>
+                      {order.employee ? (
+                        <span
+                          className="status-badge employee"
+                          style={{ background: "#000", color: "#fff" }}
+                        >
+                          EMP
+                        </span>
+                      ) : (
+                        <span className="muted">—</span>
                       )}
                     </td>
 
-                    {/* TOTAL */}
                     <td>{toINR(order.totalAmount)}</td>
 
-                    {/* REFUNDS CELL */}
                     <td>
                       {!refund ? (
                         <span className="muted">—</span>
@@ -514,16 +488,15 @@ export default function OrdersPage() {
                           <div className="refunds-total">
                             <strong>Total Refunded:</strong> {toINR(refund.total)}
                           </div>
-                          {refund.lastRefundAt && (
+                          {refund.lastRefundAt ? (
                             <div className="refunds-last">
                               Last refund: {refund.lastRefundAt.toLocaleString("en-IN")}
                             </div>
-                          )}
+                          ) : null}
                         </div>
                       )}
                     </td>
 
-                    {/* STATUS */}
                     <td>
                       <span
                         className={`status-badge ${
@@ -536,37 +509,35 @@ export default function OrdersPage() {
                       >
                         {order.status === "DELIVERED" ? "DONE" : order.status}
                       </span>
-                      {order.deliveredAt && (
+                      {order.deliveredAt ? (
                         <div className="muted">
                           {new Date(order.deliveredAt).toLocaleString("en-IN")}
                         </div>
-                      )}
+                      ) : null}
                     </td>
 
-                    {/* ACTIONS */}
                     <td>
-                      {order.status === "PENDING" && (
-                        <button
-                          className="btn secondary"
-                          style={{ marginBottom: 6 }}
-                          onClick={() => router.push(`/order?edit=1&orderId=${order._id}`)}
-                          title="Edit this order"
-                        >
-                          Edit ✏️
-                        </button>
-                      )}
+                      {order.status === "PENDING" ? (
+                        <>
+                          <button
+                            className="btn secondary"
+                            style={{ marginBottom: 6 }}
+                            onClick={() => router.push(`/order?edit=1&orderId=${order._id}`)}
+                            title="Edit this order"
+                          >
+                            Edit ✏️
+                          </button>
+                          <button
+                            className="btn confirm-btn"
+                            onClick={() => printAndConfirm(order)}
+                            disabled={printingId === order._id}
+                          >
+                            {printingId === order._id ? "Confirming…" : "Confirm ✅"}
+                          </button>
+                        </>
+                      ) : null}
 
-                      {order.status === "PENDING" && (
-                        <button
-                          className="btn confirm-btn"
-                          onClick={() => printAndConfirm(order)}
-                          disabled={printingId === order._id}
-                        >
-                          {printingId === order._id ? "Confirming…" : "Confirm ✅"}
-                        </button>
-                      )}
-
-                      {order.status === "CONFIRMED" && cancelMode !== order._id && (
+                      {order.status === "CONFIRMED" && cancelMode !== order._id ? (
                         <>
                           <button
                             className="btn success"
@@ -588,9 +559,9 @@ export default function OrdersPage() {
                             Cancel ❌
                           </button>
                         </>
-                      )}
+                      ) : null}
 
-                      {order.status === "DELIVERED" && cancelMode !== order._id && (
+                      {order.status === "DELIVERED" && cancelMode !== order._id ? (
                         <>
                           <span className="muted" style={{ display: "block", marginBottom: 6 }}>
                             Handed to customer ✔️
@@ -608,9 +579,9 @@ export default function OrdersPage() {
                             Cancel ❌
                           </button>
                         </>
-                      )}
+                      ) : null}
 
-                      {cancelMode === order._id && (
+                      {cancelMode === order._id ? (
                         <>
                           <button className="btn refund-btn" onClick={() => refundItems(order)}>
                             Refund 💰
@@ -619,7 +590,7 @@ export default function OrdersPage() {
                             Close
                           </button>
                         </>
-                      )}
+                      ) : null}
                     </td>
                   </tr>
                 );
