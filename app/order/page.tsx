@@ -103,7 +103,6 @@ const ITEMS: MenuItem[] = [
   { id: "cold-badam-milk", category: "Cold Beverages", name: "Badam Milk", price: 80 },
 
   // 🧩 Miscellaneous
-  { id: "misc-sprite", category: "Miscellaneous", name: "Sprite", price: 10 },
   { id: "misc-water-bottle", category: "Miscellaneous", name: "Water Bottle", price: 10 },
 
 ];
