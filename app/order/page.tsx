@@ -86,8 +86,8 @@ const ITEMS: MenuItem[] = [
   // 🧃 Juices
   { id: "juice-mint-lime-soda", category: "Juices", name: "Mint & Lime Soda", price: 40 },
   { id: "juice-watermelon-crush", category: "Juices", name: "Watermelon Crush Juice", price: 60 },
-  { id: "juice-abc", category: "Juices", name: "ABC", price: 60 },
-  { id: "juice-muskmelon", category: "Juices", name: "Muskmelon Juice", price: 80 },
+  { id: "juice-muskmelon", category: "Juices", name: "Muskmelon Juice", price: 60 },
+  { id: "juice-abc", category: "Juices", name: "ABC", price: 80 },
   { id: "juice-cucumber-spinach-greenapple", category: "Juices", name: "Cucumber Spinach Green Apple", price: 80 },
 
   // ☕ Hot Beverages
