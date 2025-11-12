@@ -15,7 +15,8 @@ type Category =
   | "Smoothies"
   | "Juices"
   | "Hot Beverages"
-  | "Cold Beverages";
+  | "Cold Beverages"
+  | "Miscellaneous";
 
 type MenuItem = {
   id: string;
@@ -35,6 +36,7 @@ const CATEGORIES: Category[] = [
   "Juices",
   "Hot Beverages",
   "Cold Beverages",
+  "Miscellaneous",
 ];
 
 const DRESSINGS = ["Yogurt", "Chipotle", "Mint"] as const;
@@ -99,6 +101,11 @@ const ITEMS: MenuItem[] = [
   { id: "cold-iced-tea", category: "Cold Beverages", name: "Iced Tea", price: 70 },
   { id: "cold-cold-coffee", category: "Cold Beverages", name: "Cold Coffee", price: 80 },
   { id: "cold-badam-milk", category: "Cold Beverages", name: "Badam Milk", price: 80 },
+
+  // 🧩 Miscellaneous
+  { id: "misc-sprite", category: "Miscellaneous", name: "Sprite", price: 10 },
+  { id: "misc-water-bottle", category: "Miscellaneous", name: "Water Bottle", price: 10 },
+
 ];
 
 // ==============================
