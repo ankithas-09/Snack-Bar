@@ -104,6 +104,7 @@ const ITEMS: MenuItem[] = [
 
   // 🧩 Miscellaneous
   { id: "misc-water-bottle", category: "Miscellaneous", name: "Water Bottle", price: 10 },
+  { id: "misc-biscuits", category: "Miscellaneous", name: "Biscuit", price: 10}
 
 ];
 
